@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Player, PlayerRef } from '@remotion/player';
-import { ClickDzVideo } from './components/ClickDzVideo';
+import { DefaultTemplate } from './components/DefaultTemplate';
 import { DynamicVideo, Scene } from './components/DynamicVideo';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
@@ -98,14 +98,30 @@ export default function App() {
       const targetFrames = targetSeconds * 30;
       const estimatedScenes = Math.max(3, Math.floor(targetSeconds / 4));
 
-      const prompt = `Create a highly engaging promotional video script based on this input: "${promptInput}". 
+      const prompt = `Create a highly engaging, professional social media promotional video script based on this input: "${promptInput}". 
       The tone and style of the video should be: ${videoStyle}.
-      The video should have around ${estimatedScenes} scenes. Each scene needs a short, punchy title, a subtitle, a color hex code, an icon name from lucide-react (e.g., Zap, Star, ShoppingCart, TrendingUp, DollarSign, CheckCircle, Flame, Rocket, Gift, Shield), and a duration in frames (30fps).
+      The video should have around ${estimatedScenes} scenes. 
+      
       CRITICAL: The total video must be exactly ${targetSeconds} seconds long (${targetFrames} frames total). The sum of 'durationInFrames' across all scenes MUST equal exactly ${targetFrames}.
+      
+      You must act as an expert social media content creator and video editor. Use strong hooks, engaging pacing, and dynamic visual descriptions.
+      
+      For each scene, provide:
+      - layout: Choose from 'center' (bold text focus), 'split' (two-tone background), 'mockup' (UI/app showcase), or 'data' (showing a stat or progress).
+      - title: Short, punchy hook or main point.
+      - subtitle: Supporting text.
+      - iconName: A relevant icon from lucide-react (e.g., Zap, Star, Smartphone, BarChart3, TrendingUp, ShieldCheck).
+      - color: Primary vibrant hex color.
+      - bgColor: A contrasting dark or complementary hex color for the background.
+      - durationInFrames: Frames for this scene (30fps).
+      - dataValue: (Optional) A number from 1 to 100 if layout is 'data' (e.g., 99 for "99% satisfaction").
+      - dataLabel: (Optional) Label for the dataValue.
+      
       Return ONLY a valid JSON array of objects. Do not include markdown formatting like \`\`\`json. Just the raw JSON array.
       Example format:
       [
-        {"title": "...", "subtitle": "...", "iconName": "Zap", "color": "#FF0000", "durationInFrames": 90}
+        {"layout": "center", "title": "STOP SCROLLING", "subtitle": "You need to see this", "iconName": "AlertCircle", "color": "#FF3366", "bgColor": "#111111", "durationInFrames": 60},
+        {"layout": "data", "title": "Boost Productivity", "subtitle": "Users report massive gains", "iconName": "TrendingUp", "color": "#00E5FF", "bgColor": "#0A2540", "durationInFrames": 90, "dataValue": 85, "dataLabel": "Efficiency Increase"}
       ]`;
 
       let generatedScenes: Scene[] = [];
@@ -434,7 +450,7 @@ export default function App() {
                 >
                   <Player
                     ref={playerRef}
-                    component={scenes ? DynamicVideo : ClickDzVideo}
+                    component={scenes ? DynamicVideo : DefaultTemplate}
                     inputProps={scenes ? { scenes, fontFamily } : undefined}
                     durationInFrames={totalDuration}
                     compositionWidth={compWidth}

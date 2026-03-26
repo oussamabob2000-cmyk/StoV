@@ -1,5 +1,5 @@
 {
-  "name": "ClickDzPro Promo Generator",
-  "description": "A Remotion-based video generator for ClickDzPro TikTok promotions, featuring in-browser rendering with ffmpeg.wasm.",
+  "name": "PromoGen AI",
+  "description": "A professional open-source AI video generator using React, Remotion, and FFmpeg.wasm for client-side rendering.",
   "requestFramePermissions": []
 }

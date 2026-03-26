@@ -104,7 +104,7 @@ const GlassCard = ({ icon: Icon, title, subtitle, delay, color }: { icon: any, t
 
 // --- Main Video Component ---
 
-export const ClickDzVideo = () => {
+export const DefaultTemplate = () => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
 
@@ -175,7 +175,7 @@ export const ClickDzVideo = () => {
               boxShadow: '0 0 50px rgba(0, 255, 204, 0.4)'
             }}
           >
-            <span style={{ color: '#000', fontSize: '80px', fontWeight: 900 }}>ClickDzPro</span>
+            <span style={{ color: '#000', fontSize: '80px', fontWeight: 900 }}>PromoGen AI</span>
           </div>
 
           <div style={{ marginTop: '50px' }}>
@@ -250,7 +250,7 @@ export const ClickDzVideo = () => {
               boxShadow: '0 20px 50px rgba(0, 255, 204, 0.4)'
             }}
           >
-            <span style={{ color: '#000', fontSize: '65px', fontWeight: 900 }}>CLICKDZ.AI</span>
+            <span style={{ color: '#000', fontSize: '65px', fontWeight: 900 }}>PROMOGEN.AI</span>
             <ArrowRight size={60} color="#000" />
           </div>
 
