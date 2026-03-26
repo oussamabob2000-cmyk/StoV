@@ -29,7 +29,7 @@ export default function App() {
   // Settings State
   const [aiProvider, setAiProvider] = useState<'gemini' | 'openrouter'>('gemini');
   const [apiKeyInput, setApiKeyInput] = useState('');
-  const [modelNameInput, setModelNameInput] = useState('google/gemini-2.5-flash');
+  const [modelNameInput, setModelNameInput] = useState('google/gemini-2.0-flash-lite-preview-02-05:free');
   const [settingsPin, setSettingsPin] = useState('');
   const [settingsMessage, setSettingsMessage] = useState('');
 
@@ -122,6 +122,11 @@ export default function App() {
         const data = await res.json();
         let text = data.choices[0].message.content;
         text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        const firstBracket = text.indexOf('[');
+        const lastBracket = text.lastIndexOf(']');
+        if (firstBracket !== -1 && lastBracket !== -1) {
+          text = text.substring(firstBracket, lastBracket + 1);
+        }
         generatedScenes = JSON.parse(text);
       } else {
         const ai = new GoogleGenAI({ apiKey: settings.apiKey });
@@ -519,8 +524,22 @@ export default function App() {
                   </div>
 
                   {aiError && (
-                    <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-sm">
-                      {aiError}
+                    <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-sm flex flex-col gap-2">
+                      <p>{aiError}</p>
+                      {aiError.includes('openrouter.ai/settings/privacy') && (
+                        <div className="mt-2 text-xs text-red-300">
+                          <strong>Fix:</strong> Free OpenRouter models require data logging to be enabled. 
+                          Click the link below to allow data logging, or use a paid model.
+                          <a 
+                            href="https://openrouter.ai/settings/privacy" 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="block mt-2 text-white bg-red-500/20 hover:bg-red-500/30 px-3 py-2 rounded-md text-center font-medium transition-colors"
+                          >
+                            Open Privacy Settings
+                          </a>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -585,9 +604,10 @@ export default function App() {
                         type="text"
                         value={modelNameInput}
                         onChange={(e) => setModelNameInput(e.target.value)}
-                        placeholder="e.g., anthropic/claude-3-haiku"
+                        placeholder="e.g., google/gemini-2.0-flash-lite-preview-02-05:free"
                         className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-3 text-white outline-none focus:border-teal-400"
                       />
+                      <p className="text-xs text-neutral-500 mt-2">Note: Free models require "Allow Data Logging" to be enabled in your OpenRouter privacy settings.</p>
                     </div>
                   )}
 
