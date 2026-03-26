@@ -24,6 +24,8 @@ export default function App() {
   const [promptTemplate, setPromptTemplate] = useState('custom');
   const [videoStyle, setVideoStyle] = useState('Professional Marketing');
   const [fontFamily, setFontFamily] = useState('Anton');
+  const [videoLength, setVideoLength] = useState('15');
+  const [manualLength, setManualLength] = useState(30);
   const [pinInput, setPinInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [scenes, setScenes] = useState<Scene[] | null>(null);
@@ -92,9 +94,14 @@ export default function App() {
 
     setIsGenerating(true);
     try {
+      const targetSeconds = videoLength === 'manual' ? manualLength : parseInt(videoLength);
+      const targetFrames = targetSeconds * 30;
+      const estimatedScenes = Math.max(3, Math.floor(targetSeconds / 4));
+
       const prompt = `Create a highly engaging promotional video script based on this input: "${promptInput}". 
       The tone and style of the video should be: ${videoStyle}.
-      The video should have 4-6 scenes. Each scene needs a short, punchy title, a subtitle, a color hex code, an icon name from lucide-react (e.g., Zap, Star, ShoppingCart, TrendingUp, DollarSign, CheckCircle, Flame, Rocket, Gift, Shield), and a duration in frames (30fps, total video should be around 15 seconds, so 450 frames total).
+      The video should have around ${estimatedScenes} scenes. Each scene needs a short, punchy title, a subtitle, a color hex code, an icon name from lucide-react (e.g., Zap, Star, ShoppingCart, TrendingUp, DollarSign, CheckCircle, Flame, Rocket, Gift, Shield), and a duration in frames (30fps).
+      CRITICAL: The total video must be exactly ${targetSeconds} seconds long (${targetFrames} frames total). The sum of 'durationInFrames' across all scenes MUST equal exactly ${targetFrames}.
       Return ONLY a valid JSON array of objects. Do not include markdown formatting like \`\`\`json. Just the raw JSON array.
       Example format:
       [
@@ -570,17 +577,33 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-1.5">Prompt / URL / Script</label>
-                    <textarea 
-                      value={promptInput}
-                      onChange={(e) => setPromptInput(e.target.value)}
-                      placeholder="e.g., Create a promo video for my new fitness app..."
-                      className="w-full h-32 bg-neutral-950 border border-neutral-800 rounded-xl p-4 text-white outline-none focus:border-teal-400 resize-none"
-                    />
-                  </div>
-
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-300 mb-1.5">Video Length</label>
+                      <div className="flex gap-2">
+                        <select 
+                          value={videoLength}
+                          onChange={(e) => setVideoLength(e.target.value)}
+                          className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-teal-400"
+                        >
+                          <option value="15">15 Seconds (Short)</option>
+                          <option value="30">30 Seconds (Standard)</option>
+                          <option value="60">1 Minute (Long)</option>
+                          <option value="manual">Manual Input</option>
+                        </select>
+                        {videoLength === 'manual' && (
+                          <input 
+                            type="number"
+                            min="5"
+                            max="300"
+                            value={manualLength}
+                            onChange={(e) => setManualLength(parseInt(e.target.value) || 15)}
+                            className="w-24 bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-teal-400"
+                            placeholder="Secs"
+                          />
+                        )}
+                      </div>
+                    </div>
                     <div>
                       <label className="block text-sm font-medium text-neutral-300 mb-1.5">Font Style</label>
                       <select 
@@ -597,18 +620,29 @@ export default function App() {
                         <option value="Cinzel">Cinzel (Cinematic & Epic)</option>
                       </select>
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-1.5 flex items-center gap-2">
-                        <Lock size={14} /> Enter PIN to decrypt API settings
-                      </label>
-                      <input 
-                        type="password"
-                        value={pinInput}
-                        onChange={(e) => setPinInput(e.target.value)}
-                        placeholder="****"
-                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-teal-400"
-                      />
-                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-1.5">Prompt / URL / Script</label>
+                    <textarea 
+                      value={promptInput}
+                      onChange={(e) => setPromptInput(e.target.value)}
+                      placeholder="e.g., Create a promo video for my new fitness app..."
+                      className="w-full h-32 bg-neutral-950 border border-neutral-800 rounded-xl p-4 text-white outline-none focus:border-teal-400 resize-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-1.5 flex items-center gap-2">
+                      <Lock size={14} /> Enter PIN to decrypt API settings
+                    </label>
+                    <input 
+                      type="password"
+                      value={pinInput}
+                      onChange={(e) => setPinInput(e.target.value)}
+                      placeholder="****"
+                      className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-teal-400"
+                    />
                   </div>
 
                   {aiError && (
