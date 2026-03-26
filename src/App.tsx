@@ -21,6 +21,9 @@ export default function App() {
   
   // AI State
   const [promptInput, setPromptInput] = useState('');
+  const [promptTemplate, setPromptTemplate] = useState('custom');
+  const [videoStyle, setVideoStyle] = useState('Professional Marketing');
+  const [fontFamily, setFontFamily] = useState('Anton');
   const [pinInput, setPinInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [scenes, setScenes] = useState<Scene[] | null>(null);
@@ -29,7 +32,7 @@ export default function App() {
   // Settings State
   const [aiProvider, setAiProvider] = useState<'gemini' | 'openrouter'>('gemini');
   const [apiKeyInput, setApiKeyInput] = useState('');
-  const [modelNameInput, setModelNameInput] = useState('google/gemini-2.0-flash-lite-preview-02-05:free');
+  const [modelNameInput, setModelNameInput] = useState('openai/gpt-4o-mini');
   const [settingsPin, setSettingsPin] = useState('');
   const [settingsMessage, setSettingsMessage] = useState('');
 
@@ -90,6 +93,7 @@ export default function App() {
     setIsGenerating(true);
     try {
       const prompt = `Create a highly engaging promotional video script based on this input: "${promptInput}". 
+      The tone and style of the video should be: ${videoStyle}.
       The video should have 4-6 scenes. Each scene needs a short, punchy title, a subtitle, a color hex code, an icon name from lucide-react (e.g., Zap, Star, ShoppingCart, TrendingUp, DollarSign, CheckCircle, Flame, Rocket, Gift, Shield), and a duration in frames (30fps, total video should be around 15 seconds, so 450 frames total).
       Return ONLY a valid JSON array of objects. Do not include markdown formatting like \`\`\`json. Just the raw JSON array.
       Example format:
@@ -100,7 +104,7 @@ export default function App() {
       let generatedScenes: Scene[] = [];
 
       if (settings.provider === 'openrouter') {
-        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        let res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${settings.apiKey}`,
@@ -109,14 +113,36 @@ export default function App() {
             'X-Title': 'PromoGen AI'
           },
           body: JSON.stringify({
-            model: settings.modelName || 'google/gemini-2.5-flash',
+            model: settings.modelName || 'openai/gpt-4o-mini',
             messages: [{ role: 'user', content: prompt }]
           })
         });
         
         if (!res.ok) {
           const errData = await res.json();
-          throw new Error(errData.error?.message || 'OpenRouter API Error');
+          // Automatic fallback if the user is using a free model but hasn't enabled data logging
+          if (errData.error?.message?.includes('guardrail restrictions and data policy')) {
+            console.log('Falling back to paid model to bypass data policy restriction...');
+            res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${settings.apiKey}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': window.location.origin,
+                'X-Title': 'PromoGen AI'
+              },
+              body: JSON.stringify({
+                model: 'openai/gpt-4o-mini',
+                messages: [{ role: 'user', content: prompt }]
+              })
+            });
+            if (!res.ok) {
+              const fallbackErr = await res.json();
+              throw new Error(fallbackErr.error?.message || 'OpenRouter API Error (Fallback failed)');
+            }
+          } else {
+            throw new Error(errData.error?.message || 'OpenRouter API Error');
+          }
         }
         
         const data = await res.json();
@@ -402,7 +428,7 @@ export default function App() {
                   <Player
                     ref={playerRef}
                     component={scenes ? DynamicVideo : ClickDzVideo}
-                    inputProps={scenes ? { scenes } : undefined}
+                    inputProps={scenes ? { scenes, fontFamily } : undefined}
                     durationInFrames={totalDuration}
                     compositionWidth={compWidth}
                     compositionHeight={compHeight}
@@ -500,6 +526,50 @@ export default function App() {
                 <p className="text-neutral-400 mb-6">Paste a website URL, YouTube link, or a script to generate a custom promotional video.</p>
 
                 <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-300 mb-1.5">Prompt Template</label>
+                      <select 
+                        value={promptTemplate}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setPromptTemplate(val);
+                          if (val === 'ecommerce') {
+                            setPromptInput('Create a promo video for a new smart coffee mug. Highlight features: keeps coffee hot for 12 hours, app-controlled temperature, sleek design. End with a 20% off discount code: MUG20.');
+                          } else if (val === 'app_launch') {
+                            setPromptInput('Create an app launch video for a meditation app called "ZenMind". Highlight features: daily guided meditations, sleep sounds, progress tracking. Call to action: Download now on iOS and Android.');
+                          } else if (val === 'service') {
+                            setPromptInput('Create a promo video for a local plumbing service called "QuickFix". Highlight: 24/7 emergency service, licensed professionals, upfront pricing. Call to action: Call us today for a free quote.');
+                          } else {
+                            setPromptInput('');
+                          }
+                        }}
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-teal-400"
+                      >
+                        <option value="custom">Custom Prompt</option>
+                        <option value="ecommerce">E-commerce Product</option>
+                        <option value="app_launch">App Launch</option>
+                        <option value="service">Service Promotion</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-300 mb-1.5">Video Style & Tone</label>
+                      <select 
+                        value={videoStyle}
+                        onChange={(e) => setVideoStyle(e.target.value)}
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-teal-400"
+                      >
+                        <option value="Professional Marketing">Professional Marketing</option>
+                        <option value="Funny & Energetic">Funny & Energetic</option>
+                        <option value="Cyberpunk Style">Cyberpunk Style</option>
+                        <option value="Full Animation / Cartoonish">Full Animation / Cartoonish</option>
+                        <option value="Minimalist & Clean">Minimalist & Clean</option>
+                        <option value="Cinematic">Cinematic</option>
+                        <option value="Content Creator (5 years experience)">Content Creator (5 yrs exp)</option>
+                      </select>
+                    </div>
+                  </div>
+
                   <div>
                     <label className="block text-sm font-medium text-neutral-300 mb-1.5">Prompt / URL / Script</label>
                     <textarea 
@@ -510,17 +580,35 @@ export default function App() {
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-1.5 flex items-center gap-2">
-                      <Lock size={14} /> Enter PIN to decrypt API settings
-                    </label>
-                    <input 
-                      type="password"
-                      value={pinInput}
-                      onChange={(e) => setPinInput(e.target.value)}
-                      placeholder="****"
-                      className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-teal-400"
-                    />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-300 mb-1.5">Font Style</label>
+                      <select 
+                        value={fontFamily}
+                        onChange={(e) => setFontFamily(e.target.value)}
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-teal-400"
+                      >
+                        <option value="Anton">Anton (Bold & Punchy)</option>
+                        <option value="Inter">Inter (Clean & Modern)</option>
+                        <option value="Playfair Display">Playfair Display (Elegant Serif)</option>
+                        <option value="Space Grotesk">Space Grotesk (Tech & Futuristic)</option>
+                        <option value="JetBrains Mono">JetBrains Mono (Coding & Cyber)</option>
+                        <option value="Bangers">Bangers (Comic & Fun)</option>
+                        <option value="Cinzel">Cinzel (Cinematic & Epic)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-300 mb-1.5 flex items-center gap-2">
+                        <Lock size={14} /> Enter PIN to decrypt API settings
+                      </label>
+                      <input 
+                        type="password"
+                        value={pinInput}
+                        onChange={(e) => setPinInput(e.target.value)}
+                        placeholder="****"
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-teal-400"
+                      />
+                    </div>
                   </div>
 
                   {aiError && (
@@ -604,10 +692,10 @@ export default function App() {
                         type="text"
                         value={modelNameInput}
                         onChange={(e) => setModelNameInput(e.target.value)}
-                        placeholder="e.g., google/gemini-2.0-flash-lite-preview-02-05:free"
+                        placeholder="e.g., openai/gpt-4o-mini"
                         className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-3 text-white outline-none focus:border-teal-400"
                       />
-                      <p className="text-xs text-neutral-500 mt-2">Note: Free models require "Allow Data Logging" to be enabled in your OpenRouter privacy settings.</p>
+                      <p className="text-xs text-neutral-500 mt-2">Note: Free models (like google/gemini-2.5-flash:free) require "Allow Data Logging" to be enabled in your OpenRouter privacy settings.</p>
                     </div>
                   )}
 

@@ -10,7 +10,7 @@ export type Scene = {
   durationInFrames: number;
 };
 
-export const DynamicVideo: React.FC<{ scenes: Scene[] }> = ({ scenes }) => {
+export const DynamicVideo: React.FC<{ scenes: Scene[], fontFamily?: string }> = ({ scenes, fontFamily = 'Anton' }) => {
   const { fps } = useVideoConfig();
 
   let currentStartFrame = 0;
@@ -30,7 +30,7 @@ export const DynamicVideo: React.FC<{ scenes: Scene[] }> = ({ scenes }) => {
             from={startFrame}
             durationInFrames={scene.durationInFrames}
           >
-            <SceneComponent scene={scene} index={index} />
+            <SceneComponent scene={scene} index={index} fontFamily={fontFamily} />
           </Sequence>
         );
       })}
@@ -58,7 +58,7 @@ const DynamicBackground: React.FC = () => {
   );
 };
 
-const SceneComponent: React.FC<{ scene: Scene; index: number }> = ({ scene, index }) => {
+const SceneComponent: React.FC<{ scene: Scene; index: number; fontFamily: string }> = ({ scene, index, fontFamily }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -101,7 +101,7 @@ const SceneComponent: React.FC<{ scene: Scene; index: number }> = ({ scene, inde
 
         <h1
           style={{
-            fontFamily: 'Anton, sans-serif',
+            fontFamily: `${fontFamily}, sans-serif`,
             fontSize: '100px',
             lineHeight: 1,
             color: 'white',
