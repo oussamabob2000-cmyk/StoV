@@ -1,0 +1,543 @@
+import { useState, useRef, useEffect } from 'react';
+import { Player, PlayerRef } from '@remotion/player';
+import { ClickDzVideo } from './components/ClickDzVideo';
+import { DynamicVideo, Scene } from './components/DynamicVideo';
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import { toPng, toCanvas } from 'html-to-image';
+import { Download, Play, Loader2, Video, Settings, Zap, Wand2, KeyRound, Lock } from 'lucide-react';
+import * as Mp4Muxer from 'mp4-muxer';
+import { GoogleGenAI, Type } from '@google/genai';
+import { saveEncryptedApiKey, getDecryptedApiKey, hasEncryptedApiKey } from './lib/crypto';
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<'preview' | 'ai' | 'settings'>('preview');
+  
+  // AI State
+  const [promptInput, setPromptInput] = useState('');
+  const [pinInput, setPinInput] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [scenes, setScenes] = useState<Scene[] | null>(null);
+  const [aiError, setAiError] = useState('');
+
+  // Settings State
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [settingsPin, setSettingsPin] = useState('');
+  const [settingsMessage, setSettingsMessage] = useState('');
+
+  // Render State
+  const [isRendering, setIsRendering] = useState(false);
+  const [renderProgress, setRenderProgress] = useState(0);
+  const [statusText, setStatusText] = useState('');
+  const [engine, setEngine] = useState<'webcodecs' | 'ffmpeg'>('webcodecs');
+  const [resolution, setResolution] = useState<'1080' | '720' | '480'>('1080');
+  const [format, setFormat] = useState<'mp4' | 'webm' | 'gif'>('mp4');
+  const [fps, setFps] = useState<number>(30);
+
+  const playerRef = useRef<PlayerRef>(null);
+  const playerContainerRef = useRef<HTMLDivElement>(null);
+  const ffmpegRef = useRef(new FFmpeg());
+
+  useEffect(() => {
+    if (engine === 'webcodecs' && format !== 'mp4') {
+      setFormat('mp4');
+    }
+  }, [engine, format]);
+
+  const handleSaveSettings = () => {
+    if (!apiKeyInput || !settingsPin) {
+      setSettingsMessage('Please enter both API Key and PIN.');
+      return;
+    }
+    saveEncryptedApiKey(apiKeyInput, settingsPin);
+    setSettingsMessage('API Key encrypted and saved securely to local storage!');
+    setApiKeyInput('');
+    setSettingsPin('');
+    setTimeout(() => setSettingsMessage(''), 3000);
+  };
+
+  const handleGenerateAI = async () => {
+    setAiError('');
+    if (!promptInput) {
+      setAiError('Please enter a prompt, URL, or script.');
+      return;
+    }
+    if (!pinInput) {
+      setAiError('Please enter your PIN to decrypt your API key.');
+      return;
+    }
+
+    const apiKey = getDecryptedApiKey(pinInput);
+    if (!apiKey) {
+      setAiError('Invalid PIN or no API key found. Please check Settings.');
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.1-pro-preview',
+        contents: `Create a highly engaging TikTok promotional video script based on this input: "${promptInput}". 
+        The video should have 4-6 scenes. Each scene needs a short, punchy title, a subtitle, a color hex code, an icon name from lucide-react (e.g., Zap, Star, ShoppingCart, TrendingUp, DollarSign, CheckCircle, Flame, Rocket, Gift, Shield), and a duration in frames (30fps, total video should be around 15 seconds, so 450 frames total).`,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING, description: 'Short, punchy title (max 4 words)' },
+                subtitle: { type: Type.STRING, description: 'Engaging subtitle (max 8 words)' },
+                iconName: { type: Type.STRING, description: 'Exact name of a lucide-react icon (e.g., Zap, Rocket, Flame)' },
+                color: { type: Type.STRING, description: 'Hex color code for the scene accent' },
+                durationInFrames: { type: Type.NUMBER, description: 'Duration of this scene in frames (at 30fps). Sum of all scenes should be ~450.' }
+              },
+              required: ['title', 'subtitle', 'iconName', 'color', 'durationInFrames']
+            }
+          }
+        }
+      });
+
+      if (response.text) {
+        const generatedScenes = JSON.parse(response.text);
+        setScenes(generatedScenes);
+        setActiveTab('preview');
+      } else {
+        setAiError('Failed to generate video script.');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setAiError(err.message || 'An error occurred during generation.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const loadFFmpeg = async () => {
+    const ffmpeg = ffmpegRef.current;
+    if (!ffmpeg.loaded) {
+      setStatusText('Loading FFmpeg...');
+      const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+      await ffmpeg.load({
+        coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+        wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+      });
+    }
+  };
+
+  const renderWithWebCodecs = async () => {
+    if (isRendering) return;
+    setIsRendering(true);
+    setRenderProgress(0);
+    setStatusText('Initializing Hardware Encoder...');
+
+    try {
+      const targetFps = fps;
+      const totalFrames = scenes ? scenes.reduce((acc, s) => acc + s.durationInFrames, 0) : 450;
+      const step = 30 / targetFps;
+
+      let width = 1080;
+      let height = 1920;
+      if (resolution === '720') { width = 720; height = 1280; }
+      if (resolution === '480') { width = 480; height = 854; }
+
+      width = Math.floor(width / 2) * 2;
+      height = Math.floor(height / 2) * 2;
+
+      let muxer = new Mp4Muxer.Muxer({
+        target: new Mp4Muxer.ArrayBufferTarget(),
+        video: { codec: 'avc', width, height },
+        fastStart: 'in-memory',
+      });
+
+      let videoEncoder = new VideoEncoder({
+        output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+        error: (e) => console.error(e),
+      });
+
+      videoEncoder.configure({
+        codec: 'avc1.420028',
+        width,
+        height,
+        bitrate: 5_000_000,
+        framerate: targetFps,
+      });
+
+      playerRef.current?.pause();
+
+      for (let i = 0; i < totalFrames; i++) {
+        const compFrame = Math.floor(i * step);
+        playerRef.current?.seekTo(compFrame);
+        await new Promise((resolve) => setTimeout(resolve, 60));
+
+        if (playerContainerRef.current) {
+          const sourceCanvas = await toCanvas(playerContainerRef.current, {
+            cacheBust: true, width: 1080, height: 1920, pixelRatio: 1,
+            style: { transform: 'scale(1)', transformOrigin: 'top left' }
+          });
+
+          let finalCanvas = sourceCanvas;
+          if (width !== 1080 || height !== 1920) {
+            finalCanvas = document.createElement('canvas');
+            finalCanvas.width = width;
+            finalCanvas.height = height;
+            const ctx = finalCanvas.getContext('2d');
+            if (ctx) ctx.drawImage(sourceCanvas, 0, 0, width, height);
+          }
+
+          const timestamp = (i * 1e6) / targetFps;
+          const frame = new VideoFrame(finalCanvas, { timestamp });
+          const keyFrame = i % targetFps === 0;
+          videoEncoder.encode(frame, { keyFrame });
+          frame.close();
+        }
+        
+        setRenderProgress((i / totalFrames) * 100);
+        setStatusText(`Encoding frame ${i + 1}/${totalFrames}...`);
+      }
+
+      setStatusText('Finalizing video...');
+      await videoEncoder.flush();
+      muxer.finalize();
+
+      const buffer = muxer.target.buffer;
+      const blob = new Blob([buffer], { type: 'video/mp4' });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `promo-fast.mp4`;
+      a.click();
+
+      setStatusText('Done!');
+      setTimeout(() => setStatusText(''), 3000);
+    } catch (err) {
+      console.error(err);
+      setStatusText('Rendering failed. See console.');
+    } finally {
+      setIsRendering(false);
+    }
+  };
+
+  const renderWithFFmpeg = async () => {
+    if (isRendering) return;
+    setIsRendering(true);
+    setRenderProgress(0);
+
+    try {
+      await loadFFmpeg();
+      const ffmpeg = ffmpegRef.current;
+      const targetFps = fps;
+      const totalFrames = scenes ? scenes.reduce((acc, s) => acc + s.durationInFrames, 0) : 450;
+      const step = 30 / targetFps;
+
+      setStatusText('Capturing frames...');
+      playerRef.current?.pause();
+
+      for (let i = 0; i < totalFrames; i++) {
+        const compFrame = Math.floor(i * step);
+        playerRef.current?.seekTo(compFrame);
+        await new Promise((resolve) => setTimeout(resolve, 60));
+
+        if (playerContainerRef.current) {
+          const dataUrl = await toPng(playerContainerRef.current, {
+            cacheBust: true, width: 1080, height: 1920, pixelRatio: 1,
+            style: { transform: 'scale(1)', transformOrigin: 'top left' }
+          });
+
+          const blob = await (await fetch(dataUrl)).blob();
+          const arrayBuffer = await blob.arrayBuffer();
+          const uint8Array = new Uint8Array(arrayBuffer);
+          await ffmpeg.writeFile(`frame-${i.toString().padStart(4, '0')}.png`, uint8Array);
+        }
+        setRenderProgress((i / totalFrames) * 50);
+      }
+
+      setStatusText(`Encoding ${format.toUpperCase()}...`);
+      ffmpeg.on('progress', ({ progress }) => {
+        setRenderProgress(50 + progress * 50);
+      });
+
+      let outputName = `output.${format}`;
+      let ffmpegArgs: string[] = [];
+      let scaleFilter = '';
+
+      if (resolution === '720') scaleFilter = 'scale=720:1280';
+      if (resolution === '480') scaleFilter = 'scale=480:854';
+
+      if (format === 'mp4') {
+        ffmpegArgs = ['-framerate', targetFps.toString(), '-i', 'frame-%04d.png', ...(scaleFilter ? ['-vf', scaleFilter] : []), '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', outputName];
+      } else if (format === 'webm') {
+        ffmpegArgs = ['-framerate', targetFps.toString(), '-i', 'frame-%04d.png', ...(scaleFilter ? ['-vf', scaleFilter] : []), '-c:v', 'libvpx', '-b:v', '2M', outputName];
+      } else if (format === 'gif') {
+        ffmpegArgs = ['-framerate', targetFps.toString(), '-i', 'frame-%04d.png', '-vf', `${scaleFilter ? scaleFilter + ',' : ''}split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse`, outputName];
+      }
+
+      await ffmpeg.exec(ffmpegArgs);
+      setStatusText('Downloading...');
+      const data = await ffmpeg.readFile(outputName);
+      const mimeType = format === 'mp4' ? 'video/mp4' : format === 'webm' ? 'video/webm' : 'image/gif';
+      const url = URL.createObjectURL(new Blob([data], { type: mimeType }));
+
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `promo.${format}`;
+      a.click();
+
+      setStatusText('Done!');
+      setTimeout(() => setStatusText(''), 3000);
+
+      for (let i = 0; i < totalFrames; i++) {
+        await ffmpeg.deleteFile(`frame-${i.toString().padStart(4, '0')}.png`);
+      }
+      await ffmpeg.deleteFile(outputName);
+    } catch (err) {
+      console.error(err);
+      setStatusText('Rendering failed. See console.');
+    } finally {
+      setIsRendering(false);
+    }
+  };
+
+  const handleRender = () => {
+    if (engine === 'webcodecs') renderWithWebCodecs();
+    else renderWithFFmpeg();
+  };
+
+  const totalDuration = scenes ? scenes.reduce((acc, s) => acc + s.durationInFrames, 0) : 450;
+
+  return (
+    <div className="min-h-screen bg-neutral-950 text-white flex flex-col items-center py-10 font-sans">
+      <div className="max-w-6xl w-full px-6 flex flex-col gap-8">
+        
+        {/* Header & Tabs */}
+        <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-neutral-900 p-4 rounded-2xl border border-neutral-800">
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Video className="text-teal-400" /> PromoGen AI
+          </h1>
+          <div className="flex gap-2 bg-neutral-950 p-1 rounded-xl border border-neutral-800">
+            <button 
+              onClick={() => setActiveTab('preview')}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${activeTab === 'preview' ? 'bg-teal-500/20 text-teal-400' : 'text-neutral-400 hover:text-white'}`}
+            >
+              Preview & Render
+            </button>
+            <button 
+              onClick={() => setActiveTab('ai')}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${activeTab === 'ai' ? 'bg-teal-500/20 text-teal-400' : 'text-neutral-400 hover:text-white'}`}
+            >
+              <Wand2 size={16} /> AI Generator
+            </button>
+            <button 
+              onClick={() => setActiveTab('settings')}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${activeTab === 'settings' ? 'bg-teal-500/20 text-teal-400' : 'text-neutral-400 hover:text-white'}`}
+            >
+              <Settings size={16} /> Settings
+            </button>
+          </div>
+        </div>
+
+        {/* Main Content Area */}
+        <div className="flex flex-col md:flex-row gap-10 items-start">
+          
+          {/* Left Column: Player (Always visible but takes full width if not in preview mode) */}
+          <div className={`flex-1 flex flex-col items-center w-full ${activeTab !== 'preview' ? 'hidden md:flex opacity-50 pointer-events-none' : ''}`}>
+            <div className="relative bg-neutral-900 rounded-2xl overflow-hidden border border-neutral-800 shadow-2xl">
+              <div className="relative" style={{ width: 360, height: 640, overflow: 'hidden' }}>
+                <div
+                  ref={playerContainerRef}
+                  style={{
+                    width: 1080, height: 1920, transform: 'scale(0.333333)',
+                    transformOrigin: 'top left', position: 'absolute', top: 0, left: 0,
+                  }}
+                >
+                  <Player
+                    ref={playerRef}
+                    component={scenes ? DynamicVideo : ClickDzVideo}
+                    inputProps={scenes ? { scenes } : undefined}
+                    durationInFrames={totalDuration}
+                    compositionWidth={1080}
+                    compositionHeight={1920}
+                    fps={30}
+                    controls={!isRendering}
+                    autoPlay
+                    loop
+                    style={{ width: 1080, height: 1920 }}
+                  />
+                </div>
+              </div>
+
+              {isRendering && (
+                <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
+                  <Loader2 className="w-12 h-12 text-teal-400 animate-spin mb-4" />
+                  <p className="text-lg font-medium text-white">{statusText}</p>
+                  <div className="w-64 h-2 bg-neutral-800 rounded-full mt-4 overflow-hidden">
+                    <div className="h-full bg-teal-400 transition-all duration-300 ease-out" style={{ width: `${renderProgress}%` }} />
+                  </div>
+                  <p className="text-sm text-neutral-400 mt-2">{Math.round(renderProgress)}%</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right Column: Dynamic Content based on Tab */}
+          <div className="flex-1 w-full bg-neutral-900 p-8 rounded-2xl border border-neutral-800 min-h-[640px]">
+            
+            {/* PREVIEW & RENDER TAB */}
+            {activeTab === 'preview' && (
+              <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <h2 className="text-2xl font-bold mb-2">Render Settings</h2>
+                <p className="text-neutral-400 mb-6">Choose your preferred rendering settings below.</p>
+
+                <div className="bg-neutral-950 p-5 rounded-xl border border-neutral-800 space-y-5">
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-1.5 flex justify-between">
+                      <span>Rendering Engine</span>
+                      {engine === 'webcodecs' && <span className="text-xs text-teal-400 flex items-center gap-1"><Zap size={12} /> Hardware Accelerated</span>}
+                    </label>
+                    <select value={engine} onChange={(e) => setEngine(e.target.value as any)} disabled={isRendering} className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2.5 text-white outline-none focus:border-teal-400">
+                      <option value="webcodecs">WebCodecs (Ultra Fast, MP4 Only)</option>
+                      <option value="ffmpeg">FFmpeg.wasm (Stable, Supports GIF/WebM)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-1.5">Resolution & Quality</label>
+                    <select value={resolution} onChange={(e) => setResolution(e.target.value as any)} disabled={isRendering} className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2.5 text-white outline-none focus:border-teal-400">
+                      <option value="1080">1080p (HD - Best Quality)</option>
+                      <option value="720">720p (SD - Balanced)</option>
+                      <option value="480">480p (Draft - Fastest)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-1.5">Output Format</label>
+                    <select value={format} onChange={(e) => setFormat(e.target.value as any)} disabled={isRendering || engine === 'webcodecs'} className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2.5 text-white outline-none focus:border-teal-400">
+                      <option value="mp4">MP4 (H.264 - Best for TikTok)</option>
+                      <option value="webm">WebM (VP8 - Web Optimized)</option>
+                      <option value="gif">GIF (Animated Image)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-1.5">Frame Rate</label>
+                    <select value={fps} onChange={(e) => setFps(Number(e.target.value))} disabled={isRendering} className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2.5 text-white outline-none focus:border-teal-400">
+                      <option value={30}>30 FPS (Smooth)</option>
+                      <option value={15}>15 FPS (Fast Render)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <button onClick={handleRender} disabled={isRendering} className="w-full py-4 px-6 bg-teal-500 hover:bg-teal-400 disabled:bg-neutral-800 disabled:text-neutral-500 text-neutral-950 font-bold rounded-xl transition-colors flex items-center justify-center gap-2 text-lg shadow-lg shadow-teal-500/20">
+                  {isRendering ? <><Loader2 className="animate-spin" /> Rendering...</> : <><Download /> Render & Download</>}
+                </button>
+              </div>
+            )}
+
+            {/* AI GENERATOR TAB */}
+            {activeTab === 'ai' && (
+              <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <h2 className="text-2xl font-bold mb-2 flex items-center gap-2"><Wand2 className="text-teal-400"/> Generate Video</h2>
+                <p className="text-neutral-400 mb-6">Paste a website URL, YouTube link, or a script to generate a custom promotional video.</p>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-1.5">Prompt / URL / Script</label>
+                    <textarea 
+                      value={promptInput}
+                      onChange={(e) => setPromptInput(e.target.value)}
+                      placeholder="e.g., Create a promo video for my new fitness app..."
+                      className="w-full h-32 bg-neutral-950 border border-neutral-800 rounded-xl p-4 text-white outline-none focus:border-teal-400 resize-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-1.5 flex items-center gap-2">
+                      <Lock size={14} /> Enter PIN to decrypt API Key
+                    </label>
+                    <input 
+                      type="password"
+                      value={pinInput}
+                      onChange={(e) => setPinInput(e.target.value)}
+                      placeholder="****"
+                      className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-teal-400"
+                    />
+                  </div>
+
+                  {aiError && (
+                    <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-sm">
+                      {aiError}
+                    </div>
+                  )}
+
+                  <button 
+                    onClick={handleGenerateAI}
+                    disabled={isGenerating || !hasEncryptedApiKey()}
+                    className="w-full py-4 px-6 bg-purple-500 hover:bg-purple-400 disabled:bg-neutral-800 disabled:text-neutral-500 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 text-lg shadow-lg shadow-purple-500/20"
+                  >
+                    {isGenerating ? <><Loader2 className="animate-spin" /> Generating Script...</> : <><Wand2 /> Generate Video</>}
+                  </button>
+
+                  {!hasEncryptedApiKey() && (
+                    <p className="text-sm text-amber-400 text-center mt-4">
+                      You need to configure your API Key in Settings first.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* SETTINGS TAB */}
+            {activeTab === 'settings' && (
+              <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <h2 className="text-2xl font-bold mb-2 flex items-center gap-2"><Settings className="text-teal-400"/> Security Settings</h2>
+                <p className="text-neutral-400 mb-6">Securely store your Gemini API key locally. It is encrypted using AES and never leaves your device.</p>
+
+                <div className="space-y-5 bg-neutral-950 p-6 rounded-xl border border-neutral-800">
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-1.5 flex items-center gap-2">
+                      <KeyRound size={14} /> Gemini API Key
+                    </label>
+                    <input 
+                      type="password"
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                      placeholder="AIzaSy..."
+                      className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-3 text-white outline-none focus:border-teal-400"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-1.5 flex items-center gap-2">
+                      <Lock size={14} /> Create a Secure PIN
+                    </label>
+                    <input 
+                      type="password"
+                      value={settingsPin}
+                      onChange={(e) => setSettingsPin(e.target.value)}
+                      placeholder="e.g., 1234"
+                      className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-3 text-white outline-none focus:border-teal-400"
+                    />
+                    <p className="text-xs text-neutral-500 mt-2">This PIN is required to decrypt your key when generating videos.</p>
+                  </div>
+
+                  {settingsMessage && (
+                    <div className="p-3 bg-teal-500/10 border border-teal-500/20 text-teal-400 rounded-lg text-sm">
+                      {settingsMessage}
+                    </div>
+                  )}
+
+                  <button 
+                    onClick={handleSaveSettings}
+                    className="w-full py-3 px-6 bg-neutral-800 hover:bg-neutral-700 text-white font-medium rounded-lg transition-colors"
+                  >
+                    Encrypt & Save Locally
+                  </button>
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
