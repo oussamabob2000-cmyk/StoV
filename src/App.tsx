@@ -5,10 +5,16 @@ import { DynamicVideo, Scene } from './components/DynamicVideo';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { toPng, toCanvas } from 'html-to-image';
-import { Download, Play, Loader2, Video, Settings, Zap, Wand2, KeyRound, Lock } from 'lucide-react';
+import { Download, Play, Loader2, Video, Settings, Zap, Wand2, KeyRound, Lock, MonitorPlay } from 'lucide-react';
 import * as Mp4Muxer from 'mp4-muxer';
 import { GoogleGenAI, Type } from '@google/genai';
-import { saveEncryptedApiKey, getDecryptedApiKey, hasEncryptedApiKey } from './lib/crypto';
+import { saveEncryptedSettings, getDecryptedSettings, hasEncryptedSettings, AISettings } from './lib/crypto';
+
+const DIMENSIONS: Record<string, Record<string, [number, number]>> = {
+  '1080': { '9:16': [1080, 1920], '16:9': [1920, 1080], '1:1': [1080, 1080] },
+  '720': { '9:16': [720, 1280], '16:9': [1280, 720], '1:1': [720, 720] },
+  '480': { '9:16': [480, 854], '16:9': [854, 480], '1:1': [480, 480] },
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'preview' | 'ai' | 'settings'>('preview');
@@ -21,7 +27,9 @@ export default function App() {
   const [aiError, setAiError] = useState('');
 
   // Settings State
+  const [aiProvider, setAiProvider] = useState<'gemini' | 'openrouter'>('gemini');
   const [apiKeyInput, setApiKeyInput] = useState('');
+  const [modelNameInput, setModelNameInput] = useState('google/gemini-2.5-flash');
   const [settingsPin, setSettingsPin] = useState('');
   const [settingsMessage, setSettingsMessage] = useState('');
 
@@ -31,6 +39,7 @@ export default function App() {
   const [statusText, setStatusText] = useState('');
   const [engine, setEngine] = useState<'webcodecs' | 'ffmpeg'>('webcodecs');
   const [resolution, setResolution] = useState<'1080' | '720' | '480'>('1080');
+  const [aspectRatio, setAspectRatio] = useState<'9:16' | '16:9' | '1:1'>('9:16');
   const [format, setFormat] = useState<'mp4' | 'webm' | 'gif'>('mp4');
   const [fps, setFps] = useState<number>(30);
 
@@ -49,8 +58,13 @@ export default function App() {
       setSettingsMessage('Please enter both API Key and PIN.');
       return;
     }
-    saveEncryptedApiKey(apiKeyInput, settingsPin);
-    setSettingsMessage('API Key encrypted and saved securely to local storage!');
+    const settings: AISettings = {
+      provider: aiProvider,
+      apiKey: apiKeyInput,
+      modelName: aiProvider === 'openrouter' ? modelNameInput : undefined
+    };
+    saveEncryptedSettings(settings, settingsPin);
+    setSettingsMessage('Settings encrypted and saved securely to local storage!');
     setApiKeyInput('');
     setSettingsPin('');
     setTimeout(() => setSettingsMessage(''), 3000);
@@ -63,49 +77,84 @@ export default function App() {
       return;
     }
     if (!pinInput) {
-      setAiError('Please enter your PIN to decrypt your API key.');
+      setAiError('Please enter your PIN to decrypt your settings.');
       return;
     }
 
-    const apiKey = getDecryptedApiKey(pinInput);
-    if (!apiKey) {
+    const settings = getDecryptedSettings(pinInput);
+    if (!settings || !settings.apiKey) {
       setAiError('Invalid PIN or no API key found. Please check Settings.');
       return;
     }
 
     setIsGenerating(true);
     try {
-      const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-pro-preview',
-        contents: `Create a highly engaging TikTok promotional video script based on this input: "${promptInput}". 
-        The video should have 4-6 scenes. Each scene needs a short, punchy title, a subtitle, a color hex code, an icon name from lucide-react (e.g., Zap, Star, ShoppingCart, TrendingUp, DollarSign, CheckCircle, Flame, Rocket, Gift, Shield), and a duration in frames (30fps, total video should be around 15 seconds, so 450 frames total).`,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING, description: 'Short, punchy title (max 4 words)' },
-                subtitle: { type: Type.STRING, description: 'Engaging subtitle (max 8 words)' },
-                iconName: { type: Type.STRING, description: 'Exact name of a lucide-react icon (e.g., Zap, Rocket, Flame)' },
-                color: { type: Type.STRING, description: 'Hex color code for the scene accent' },
-                durationInFrames: { type: Type.NUMBER, description: 'Duration of this scene in frames (at 30fps). Sum of all scenes should be ~450.' }
-              },
-              required: ['title', 'subtitle', 'iconName', 'color', 'durationInFrames']
+      const prompt = `Create a highly engaging promotional video script based on this input: "${promptInput}". 
+      The video should have 4-6 scenes. Each scene needs a short, punchy title, a subtitle, a color hex code, an icon name from lucide-react (e.g., Zap, Star, ShoppingCart, TrendingUp, DollarSign, CheckCircle, Flame, Rocket, Gift, Shield), and a duration in frames (30fps, total video should be around 15 seconds, so 450 frames total).
+      Return ONLY a valid JSON array of objects. Do not include markdown formatting like \`\`\`json. Just the raw JSON array.
+      Example format:
+      [
+        {"title": "...", "subtitle": "...", "iconName": "Zap", "color": "#FF0000", "durationInFrames": 90}
+      ]`;
+
+      let generatedScenes: Scene[] = [];
+
+      if (settings.provider === 'openrouter') {
+        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${settings.apiKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': window.location.origin,
+            'X-Title': 'PromoGen AI'
+          },
+          body: JSON.stringify({
+            model: settings.modelName || 'google/gemini-2.5-flash',
+            messages: [{ role: 'user', content: prompt }]
+          })
+        });
+        
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error?.message || 'OpenRouter API Error');
+        }
+        
+        const data = await res.json();
+        let text = data.choices[0].message.content;
+        text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        generatedScenes = JSON.parse(text);
+      } else {
+        const ai = new GoogleGenAI({ apiKey: settings.apiKey });
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.1-pro-preview',
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  subtitle: { type: Type.STRING },
+                  iconName: { type: Type.STRING },
+                  color: { type: Type.STRING },
+                  durationInFrames: { type: Type.NUMBER }
+                },
+                required: ['title', 'subtitle', 'iconName', 'color', 'durationInFrames']
+              }
             }
           }
+        });
+        if (response.text) {
+          generatedScenes = JSON.parse(response.text);
+        } else {
+          throw new Error('Failed to generate video script.');
         }
-      });
-
-      if (response.text) {
-        const generatedScenes = JSON.parse(response.text);
-        setScenes(generatedScenes);
-        setActiveTab('preview');
-      } else {
-        setAiError('Failed to generate video script.');
       }
+
+      setScenes(generatedScenes);
+      setActiveTab('preview');
     } catch (err: any) {
       console.error(err);
       setAiError(err.message || 'An error occurred during generation.');
@@ -137,11 +186,7 @@ export default function App() {
       const totalFrames = scenes ? scenes.reduce((acc, s) => acc + s.durationInFrames, 0) : 450;
       const step = 30 / targetFps;
 
-      let width = 1080;
-      let height = 1920;
-      if (resolution === '720') { width = 720; height = 1280; }
-      if (resolution === '480') { width = 480; height = 854; }
-
+      let [width, height] = DIMENSIONS[resolution][aspectRatio];
       width = Math.floor(width / 2) * 2;
       height = Math.floor(height / 2) * 2;
 
@@ -173,21 +218,12 @@ export default function App() {
 
         if (playerContainerRef.current) {
           const sourceCanvas = await toCanvas(playerContainerRef.current, {
-            cacheBust: true, width: 1080, height: 1920, pixelRatio: 1,
+            cacheBust: true, width, height, pixelRatio: 1,
             style: { transform: 'scale(1)', transformOrigin: 'top left' }
           });
 
-          let finalCanvas = sourceCanvas;
-          if (width !== 1080 || height !== 1920) {
-            finalCanvas = document.createElement('canvas');
-            finalCanvas.width = width;
-            finalCanvas.height = height;
-            const ctx = finalCanvas.getContext('2d');
-            if (ctx) ctx.drawImage(sourceCanvas, 0, 0, width, height);
-          }
-
           const timestamp = (i * 1e6) / targetFps;
-          const frame = new VideoFrame(finalCanvas, { timestamp });
+          const frame = new VideoFrame(sourceCanvas, { timestamp });
           const keyFrame = i % targetFps === 0;
           videoEncoder.encode(frame, { keyFrame });
           frame.close();
@@ -232,6 +268,10 @@ export default function App() {
       const totalFrames = scenes ? scenes.reduce((acc, s) => acc + s.durationInFrames, 0) : 450;
       const step = 30 / targetFps;
 
+      let [width, height] = DIMENSIONS[resolution][aspectRatio];
+      width = Math.floor(width / 2) * 2;
+      height = Math.floor(height / 2) * 2;
+
       setStatusText('Capturing frames...');
       playerRef.current?.pause();
 
@@ -242,7 +282,7 @@ export default function App() {
 
         if (playerContainerRef.current) {
           const dataUrl = await toPng(playerContainerRef.current, {
-            cacheBust: true, width: 1080, height: 1920, pixelRatio: 1,
+            cacheBust: true, width, height, pixelRatio: 1,
             style: { transform: 'scale(1)', transformOrigin: 'top left' }
           });
 
@@ -261,17 +301,13 @@ export default function App() {
 
       let outputName = `output.${format}`;
       let ffmpegArgs: string[] = [];
-      let scaleFilter = '';
-
-      if (resolution === '720') scaleFilter = 'scale=720:1280';
-      if (resolution === '480') scaleFilter = 'scale=480:854';
-
+      
       if (format === 'mp4') {
-        ffmpegArgs = ['-framerate', targetFps.toString(), '-i', 'frame-%04d.png', ...(scaleFilter ? ['-vf', scaleFilter] : []), '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', outputName];
+        ffmpegArgs = ['-framerate', targetFps.toString(), '-i', 'frame-%04d.png', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', outputName];
       } else if (format === 'webm') {
-        ffmpegArgs = ['-framerate', targetFps.toString(), '-i', 'frame-%04d.png', ...(scaleFilter ? ['-vf', scaleFilter] : []), '-c:v', 'libvpx', '-b:v', '2M', outputName];
+        ffmpegArgs = ['-framerate', targetFps.toString(), '-i', 'frame-%04d.png', '-c:v', 'libvpx', '-b:v', '2M', outputName];
       } else if (format === 'gif') {
-        ffmpegArgs = ['-framerate', targetFps.toString(), '-i', 'frame-%04d.png', '-vf', `${scaleFilter ? scaleFilter + ',' : ''}split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse`, outputName];
+        ffmpegArgs = ['-framerate', targetFps.toString(), '-i', 'frame-%04d.png', '-vf', `split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse`, outputName];
       }
 
       await ffmpeg.exec(ffmpegArgs);
@@ -306,6 +342,12 @@ export default function App() {
   };
 
   const totalDuration = scenes ? scenes.reduce((acc, s) => acc + s.durationInFrames, 0) : 450;
+  const [compWidth, compHeight] = DIMENSIONS[resolution][aspectRatio];
+  
+  // Calculate preview scale to fit within a 360x640 box
+  const previewScale = Math.min(360 / compWidth, 640 / compHeight);
+  const previewWidth = compWidth * previewScale;
+  const previewHeight = compHeight * previewScale;
 
   return (
     <div className="min-h-screen bg-neutral-950 text-white flex flex-col items-center py-10 font-sans">
@@ -341,14 +383,14 @@ export default function App() {
         {/* Main Content Area */}
         <div className="flex flex-col md:flex-row gap-10 items-start">
           
-          {/* Left Column: Player (Always visible but takes full width if not in preview mode) */}
+          {/* Left Column: Player */}
           <div className={`flex-1 flex flex-col items-center w-full ${activeTab !== 'preview' ? 'hidden md:flex opacity-50 pointer-events-none' : ''}`}>
-            <div className="relative bg-neutral-900 rounded-2xl overflow-hidden border border-neutral-800 shadow-2xl">
-              <div className="relative" style={{ width: 360, height: 640, overflow: 'hidden' }}>
+            <div className="relative bg-neutral-900 rounded-2xl overflow-hidden border border-neutral-800 shadow-2xl flex items-center justify-center" style={{ width: 360, height: 640 }}>
+              <div className="relative" style={{ width: previewWidth, height: previewHeight, overflow: 'hidden' }}>
                 <div
                   ref={playerContainerRef}
                   style={{
-                    width: 1080, height: 1920, transform: 'scale(0.333333)',
+                    width: compWidth, height: compHeight, transform: `scale(${previewScale})`,
                     transformOrigin: 'top left', position: 'absolute', top: 0, left: 0,
                   }}
                 >
@@ -357,13 +399,13 @@ export default function App() {
                     component={scenes ? DynamicVideo : ClickDzVideo}
                     inputProps={scenes ? { scenes } : undefined}
                     durationInFrames={totalDuration}
-                    compositionWidth={1080}
-                    compositionHeight={1920}
+                    compositionWidth={compWidth}
+                    compositionHeight={compHeight}
                     fps={30}
                     controls={!isRendering}
                     autoPlay
                     loop
-                    style={{ width: 1080, height: 1920 }}
+                    style={{ width: compWidth, height: compHeight }}
                   />
                 </div>
               </div>
@@ -401,28 +443,42 @@ export default function App() {
                       <option value="ffmpeg">FFmpeg.wasm (Stable, Supports GIF/WebM)</option>
                     </select>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-1.5">Resolution & Quality</label>
-                    <select value={resolution} onChange={(e) => setResolution(e.target.value as any)} disabled={isRendering} className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2.5 text-white outline-none focus:border-teal-400">
-                      <option value="1080">1080p (HD - Best Quality)</option>
-                      <option value="720">720p (SD - Balanced)</option>
-                      <option value="480">480p (Draft - Fastest)</option>
-                    </select>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-300 mb-1.5">Resolution</label>
+                      <select value={resolution} onChange={(e) => setResolution(e.target.value as any)} disabled={isRendering} className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2.5 text-white outline-none focus:border-teal-400">
+                        <option value="1080">1080p (HD)</option>
+                        <option value="720">720p (SD)</option>
+                        <option value="480">480p (Draft)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-300 mb-1.5">Aspect Ratio</label>
+                      <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value as any)} disabled={isRendering} className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2.5 text-white outline-none focus:border-teal-400">
+                        <option value="9:16">9:16 (TikTok/Reels)</option>
+                        <option value="16:9">16:9 (YouTube)</option>
+                        <option value="1:1">1:1 (Instagram)</option>
+                      </select>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-1.5">Output Format</label>
-                    <select value={format} onChange={(e) => setFormat(e.target.value as any)} disabled={isRendering || engine === 'webcodecs'} className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2.5 text-white outline-none focus:border-teal-400">
-                      <option value="mp4">MP4 (H.264 - Best for TikTok)</option>
-                      <option value="webm">WebM (VP8 - Web Optimized)</option>
-                      <option value="gif">GIF (Animated Image)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-1.5">Frame Rate</label>
-                    <select value={fps} onChange={(e) => setFps(Number(e.target.value))} disabled={isRendering} className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2.5 text-white outline-none focus:border-teal-400">
-                      <option value={30}>30 FPS (Smooth)</option>
-                      <option value={15}>15 FPS (Fast Render)</option>
-                    </select>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-300 mb-1.5">Output Format</label>
+                      <select value={format} onChange={(e) => setFormat(e.target.value as any)} disabled={isRendering || engine === 'webcodecs'} className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2.5 text-white outline-none focus:border-teal-400">
+                        <option value="mp4">MP4 (H.264)</option>
+                        <option value="webm">WebM (VP8)</option>
+                        <option value="gif">GIF</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-300 mb-1.5">Frame Rate</label>
+                      <select value={fps} onChange={(e) => setFps(Number(e.target.value))} disabled={isRendering} className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2.5 text-white outline-none focus:border-teal-400">
+                        <option value={30}>30 FPS</option>
+                        <option value={15}>15 FPS</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
 
@@ -451,7 +507,7 @@ export default function App() {
 
                   <div>
                     <label className="block text-sm font-medium text-neutral-300 mb-1.5 flex items-center gap-2">
-                      <Lock size={14} /> Enter PIN to decrypt API Key
+                      <Lock size={14} /> Enter PIN to decrypt API settings
                     </label>
                     <input 
                       type="password"
@@ -470,15 +526,15 @@ export default function App() {
 
                   <button 
                     onClick={handleGenerateAI}
-                    disabled={isGenerating || !hasEncryptedApiKey()}
+                    disabled={isGenerating || !hasEncryptedSettings()}
                     className="w-full py-4 px-6 bg-purple-500 hover:bg-purple-400 disabled:bg-neutral-800 disabled:text-neutral-500 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 text-lg shadow-lg shadow-purple-500/20"
                   >
                     {isGenerating ? <><Loader2 className="animate-spin" /> Generating Script...</> : <><Wand2 /> Generate Video</>}
                   </button>
 
-                  {!hasEncryptedApiKey() && (
+                  {!hasEncryptedSettings() && (
                     <p className="text-sm text-amber-400 text-center mt-4">
-                      You need to configure your API Key in Settings first.
+                      You need to configure your API Provider in Settings first.
                     </p>
                   )}
                 </div>
@@ -489,21 +545,51 @@ export default function App() {
             {activeTab === 'settings' && (
               <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 <h2 className="text-2xl font-bold mb-2 flex items-center gap-2"><Settings className="text-teal-400"/> Security Settings</h2>
-                <p className="text-neutral-400 mb-6">Securely store your Gemini API key locally. It is encrypted using AES and never leaves your device.</p>
+                <p className="text-neutral-400 mb-6">Securely store your API keys locally. Encrypted using AES and never leaves your device.</p>
 
                 <div className="space-y-5 bg-neutral-950 p-6 rounded-xl border border-neutral-800">
+                  
                   <div>
                     <label className="block text-sm font-medium text-neutral-300 mb-1.5 flex items-center gap-2">
-                      <KeyRound size={14} /> Gemini API Key
+                      <MonitorPlay size={14} /> AI Provider
+                    </label>
+                    <select 
+                      value={aiProvider}
+                      onChange={(e) => setAiProvider(e.target.value as any)}
+                      className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-3 text-white outline-none focus:border-teal-400"
+                    >
+                      <option value="gemini">Google Gemini</option>
+                      <option value="openrouter">OpenRouter</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-300 mb-1.5 flex items-center gap-2">
+                      <KeyRound size={14} /> {aiProvider === 'gemini' ? 'Gemini API Key' : 'OpenRouter API Key'}
                     </label>
                     <input 
                       type="password"
                       value={apiKeyInput}
                       onChange={(e) => setApiKeyInput(e.target.value)}
-                      placeholder="AIzaSy..."
+                      placeholder={aiProvider === 'gemini' ? 'AIzaSy...' : 'sk-or-v1-...'}
                       className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-3 text-white outline-none focus:border-teal-400"
                     />
                   </div>
+
+                  {aiProvider === 'openrouter' && (
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-300 mb-1.5 flex items-center gap-2">
+                        <Wand2 size={14} /> Model Name
+                      </label>
+                      <input 
+                        type="text"
+                        value={modelNameInput}
+                        onChange={(e) => setModelNameInput(e.target.value)}
+                        placeholder="e.g., anthropic/claude-3-haiku"
+                        className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-3 text-white outline-none focus:border-teal-400"
+                      />
+                    </div>
+                  )}
 
                   <div>
                     <label className="block text-sm font-medium text-neutral-300 mb-1.5 flex items-center gap-2">
