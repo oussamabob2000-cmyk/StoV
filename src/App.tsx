@@ -5,7 +5,7 @@ import { DynamicVideo, Scene } from './components/DynamicVideo';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { toPng, toCanvas } from 'html-to-image';
-import { Download, Play, Loader2, Video, Settings, Zap, Wand2, KeyRound, Lock, MonitorPlay } from 'lucide-react';
+import { Download, Play, Loader2, Video, Settings, Zap, Wand2, KeyRound, Lock, MonitorPlay, ChevronDown, ChevronUp } from 'lucide-react';
 import * as Mp4Muxer from 'mp4-muxer';
 import { GoogleGenAI, Type } from '@google/genai';
 import { saveEncryptedSettings, getDecryptedSettings, hasEncryptedSettings, AISettings } from './lib/crypto';
@@ -14,6 +14,7 @@ const DIMENSIONS: Record<string, Record<string, [number, number]>> = {
   '1080': { '9:16': [1080, 1920], '16:9': [1920, 1080], '1:1': [1080, 1080] },
   '720': { '9:16': [720, 1280], '16:9': [1280, 720], '1:1': [720, 720] },
   '480': { '9:16': [480, 854], '16:9': [854, 480], '1:1': [480, 480] },
+  '360': { '9:16': [360, 640], '16:9': [640, 360], '1:1': [360, 360] },
 };
 
 export default function App() {
@@ -37,13 +38,38 @@ export default function App() {
   const [modelNameInput, setModelNameInput] = useState('openai/gpt-4o-mini');
   const [settingsPin, setSettingsPin] = useState('');
   const [settingsMessage, setSettingsMessage] = useState('');
+  const [showOptions, setShowOptions] = useState(false);
+
+  // Auto-adjust settings based on prompt input
+  useEffect(() => {
+    if (!promptInput) return;
+    
+    const lower = promptInput.toLowerCase();
+    
+    if (lower.match(/https?:\/\//)) {
+      setVideoStyle('Professional Marketing');
+      setFontFamily('Inter');
+    } else if (lower.includes('funny') || lower.includes('meme') || lower.includes('joke')) {
+      setVideoStyle('Funny & Energetic');
+      setFontFamily('Bangers');
+    } else if (lower.includes('tech') || lower.includes('ai ') || lower.includes('cyber') || lower.includes('software')) {
+      setVideoStyle('Cyberpunk Style');
+      setFontFamily('Space Grotesk');
+    } else if (lower.includes('cinematic') || lower.includes('movie') || lower.includes('trailer')) {
+      setVideoStyle('Cinematic');
+      setFontFamily('Cinzel');
+    } else if (lower.includes('minimal') || lower.includes('clean')) {
+      setVideoStyle('Minimalist & Clean');
+      setFontFamily('Inter');
+    }
+  }, [promptInput]);
 
   // Render State
   const [isRendering, setIsRendering] = useState(false);
   const [renderProgress, setRenderProgress] = useState(0);
   const [statusText, setStatusText] = useState('');
   const [engine, setEngine] = useState<'webcodecs' | 'ffmpeg'>('webcodecs');
-  const [resolution, setResolution] = useState<'1080' | '720' | '480'>('1080');
+  const [resolution, setResolution] = useState<'1080' | '720' | '480' | '360'>('1080');
   const [aspectRatio, setAspectRatio] = useState<'9:16' | '16:9' | '1:1'>('9:16');
   const [format, setFormat] = useState<'mp4' | 'webm' | 'gif'>('mp4');
   const [fps, setFps] = useState<number>(30);
@@ -261,6 +287,7 @@ export default function App() {
         height,
         bitrate: 5_000_000,
         framerate: targetFps,
+        hardwareAcceleration: 'prefer-hardware',
       });
 
       playerRef.current?.pause();
@@ -268,11 +295,14 @@ export default function App() {
       for (let i = 0; i < totalFrames; i++) {
         const compFrame = Math.floor(i * step);
         playerRef.current?.seekTo(compFrame);
-        await new Promise((resolve) => setTimeout(resolve, 60));
+        
+        // Wait for React to commit the frame to the DOM (much faster than fixed setTimeout)
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
         if (playerContainerRef.current) {
           const sourceCanvas = await toCanvas(playerContainerRef.current, {
-            cacheBust: true, width, height, pixelRatio: 1,
+            width, height, pixelRatio: 1,
+            cacheBust: false, skipAutoScale: true,
             style: { transform: 'scale(1)', transformOrigin: 'top left' }
           });
 
@@ -332,11 +362,14 @@ export default function App() {
       for (let i = 0; i < totalFrames; i++) {
         const compFrame = Math.floor(i * step);
         playerRef.current?.seekTo(compFrame);
-        await new Promise((resolve) => setTimeout(resolve, 60));
+        
+        // Wait for React to commit the frame to the DOM
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
         if (playerContainerRef.current) {
           const dataUrl = await toPng(playerContainerRef.current, {
-            cacheBust: true, width, height, pixelRatio: 1,
+            width, height, pixelRatio: 1,
+            cacheBust: false, skipAutoScale: true,
             style: { transform: 'scale(1)', transformOrigin: 'top left' }
           });
 
@@ -505,6 +538,7 @@ export default function App() {
                         <option value="1080">1080p (HD)</option>
                         <option value="720">720p (SD)</option>
                         <option value="480">480p (Draft)</option>
+                        <option value="360">360p (Ultra Fast)</option>
                       </select>
                     </div>
                     <div>
@@ -549,104 +583,118 @@ export default function App() {
                 <p className="text-neutral-400 mb-6">Paste a website URL, YouTube link, or a script to generate a custom promotional video.</p>
 
                 <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-1.5">Prompt Template</label>
-                      <select 
-                        value={promptTemplate}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setPromptTemplate(val);
-                          if (val === 'ecommerce') {
-                            setPromptInput('Create a promo video for a new smart coffee mug. Highlight features: keeps coffee hot for 12 hours, app-controlled temperature, sleek design. End with a 20% off discount code: MUG20.');
-                          } else if (val === 'app_launch') {
-                            setPromptInput('Create an app launch video for a meditation app called "ZenMind". Highlight features: daily guided meditations, sleep sounds, progress tracking. Call to action: Download now on iOS and Android.');
-                          } else if (val === 'service') {
-                            setPromptInput('Create a promo video for a local plumbing service called "QuickFix". Highlight: 24/7 emergency service, licensed professionals, upfront pricing. Call to action: Call us today for a free quote.');
-                          } else {
-                            setPromptInput('');
-                          }
-                        }}
-                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-teal-400"
-                      >
-                        <option value="custom">Custom Prompt</option>
-                        <option value="ecommerce">E-commerce Product</option>
-                        <option value="app_launch">App Launch</option>
-                        <option value="service">Service Promotion</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-1.5">Video Style & Tone</label>
-                      <select 
-                        value={videoStyle}
-                        onChange={(e) => setVideoStyle(e.target.value)}
-                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-teal-400"
-                      >
-                        <option value="Professional Marketing">Professional Marketing</option>
-                        <option value="Funny & Energetic">Funny & Energetic</option>
-                        <option value="Cyberpunk Style">Cyberpunk Style</option>
-                        <option value="Full Animation / Cartoonish">Full Animation / Cartoonish</option>
-                        <option value="Minimalist & Clean">Minimalist & Clean</option>
-                        <option value="Cinematic">Cinematic</option>
-                        <option value="Content Creator (5 years experience)">Content Creator (5 yrs exp)</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-1.5">Video Length</label>
-                      <div className="flex gap-2">
-                        <select 
-                          value={videoLength}
-                          onChange={(e) => setVideoLength(e.target.value)}
-                          className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-teal-400"
-                        >
-                          <option value="15">15 Seconds (Short)</option>
-                          <option value="30">30 Seconds (Standard)</option>
-                          <option value="60">1 Minute (Long)</option>
-                          <option value="manual">Manual Input</option>
-                        </select>
-                        {videoLength === 'manual' && (
-                          <input 
-                            type="number"
-                            min="5"
-                            max="300"
-                            value={manualLength}
-                            onChange={(e) => setManualLength(parseInt(e.target.value) || 15)}
-                            className="w-24 bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-teal-400"
-                            placeholder="Secs"
-                          />
-                        )}
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-neutral-300 mb-1.5">Font Style</label>
-                      <select 
-                        value={fontFamily}
-                        onChange={(e) => setFontFamily(e.target.value)}
-                        className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-white outline-none focus:border-teal-400"
-                      >
-                        <option value="Anton">Anton (Bold & Punchy)</option>
-                        <option value="Inter">Inter (Clean & Modern)</option>
-                        <option value="Playfair Display">Playfair Display (Elegant Serif)</option>
-                        <option value="Space Grotesk">Space Grotesk (Tech & Futuristic)</option>
-                        <option value="JetBrains Mono">JetBrains Mono (Coding & Cyber)</option>
-                        <option value="Bangers">Bangers (Comic & Fun)</option>
-                        <option value="Cinzel">Cinzel (Cinematic & Epic)</option>
-                      </select>
-                    </div>
-                  </div>
-
+                  {/* PRIMARY INPUT: Prompt / URL / Script */}
                   <div>
-                    <label className="block text-sm font-medium text-neutral-300 mb-1.5">Prompt / URL / Script</label>
                     <textarea 
                       value={promptInput}
                       onChange={(e) => setPromptInput(e.target.value)}
-                      placeholder="e.g., Create a promo video for my new fitness app..."
-                      className="w-full h-32 bg-neutral-950 border border-neutral-800 rounded-xl p-4 text-white outline-none focus:border-teal-400 resize-none"
+                      placeholder="Paste a URL (e.g., https://example.com) or type your prompt here..."
+                      className="w-full h-40 bg-neutral-950 border border-neutral-800 rounded-xl p-5 text-white outline-none focus:border-teal-400 resize-none text-lg shadow-inner"
                     />
                   </div>
+
+                  {/* TOGGLE ADVANCED OPTIONS */}
+                  <button 
+                    onClick={() => setShowOptions(!showOptions)}
+                    className="flex items-center gap-2 text-sm font-medium text-neutral-400 hover:text-teal-400 transition-colors py-2"
+                  >
+                    {showOptions ? <ChevronUp size={16} /> : <ChevronDown size={16} />} 
+                    {showOptions ? 'Hide Advanced Options' : 'Show Advanced Options'}
+                  </button>
+
+                  {/* ADVANCED OPTIONS (Collapsible) */}
+                  {showOptions && (
+                    <div className="p-5 bg-neutral-950 border border-neutral-800 rounded-xl space-y-4 animate-in fade-in slide-in-from-top-2">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-neutral-300 mb-1.5">Prompt Template</label>
+                          <select 
+                            value={promptTemplate}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setPromptTemplate(val);
+                              if (val === 'ecommerce') {
+                                setPromptInput('Create a promo video for a new smart coffee mug. Highlight features: keeps coffee hot for 12 hours, app-controlled temperature, sleek design. End with a 20% off discount code: MUG20.');
+                              } else if (val === 'app_launch') {
+                                setPromptInput('Create an app launch video for a meditation app called "ZenMind". Highlight features: daily guided meditations, sleep sounds, progress tracking. Call to action: Download now on iOS and Android.');
+                              } else if (val === 'service') {
+                                setPromptInput('Create a promo video for a local plumbing service called "QuickFix". Highlight: 24/7 emergency service, licensed professionals, upfront pricing. Call to action: Call us today for a free quote.');
+                              } else {
+                                setPromptInput('');
+                              }
+                            }}
+                            className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-3 text-white outline-none focus:border-teal-400"
+                          >
+                            <option value="custom">Custom Prompt</option>
+                            <option value="ecommerce">E-commerce Product</option>
+                            <option value="app_launch">App Launch</option>
+                            <option value="service">Service Promotion</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-neutral-300 mb-1.5">Video Style & Tone</label>
+                          <select 
+                            value={videoStyle}
+                            onChange={(e) => setVideoStyle(e.target.value)}
+                            className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-3 text-white outline-none focus:border-teal-400"
+                          >
+                            <option value="Professional Marketing">Professional Marketing</option>
+                            <option value="Funny & Energetic">Funny & Energetic</option>
+                            <option value="Cyberpunk Style">Cyberpunk Style</option>
+                            <option value="Full Animation / Cartoonish">Full Animation / Cartoonish</option>
+                            <option value="Minimalist & Clean">Minimalist & Clean</option>
+                            <option value="Cinematic">Cinematic</option>
+                            <option value="Content Creator (5 years experience)">Content Creator (5 yrs exp)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-neutral-300 mb-1.5">Video Length</label>
+                          <div className="flex gap-2">
+                            <select 
+                              value={videoLength}
+                              onChange={(e) => setVideoLength(e.target.value)}
+                              className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-3 text-white outline-none focus:border-teal-400"
+                            >
+                              <option value="15">15 Seconds (Short)</option>
+                              <option value="30">30 Seconds (Standard)</option>
+                              <option value="60">1 Minute (Long)</option>
+                              <option value="manual">Manual Input</option>
+                            </select>
+                            {videoLength === 'manual' && (
+                              <input 
+                                type="number"
+                                min="5"
+                                max="300"
+                                value={manualLength}
+                                onChange={(e) => setManualLength(parseInt(e.target.value) || 15)}
+                                className="w-24 bg-neutral-900 border border-neutral-700 rounded-lg p-3 text-white outline-none focus:border-teal-400"
+                                placeholder="Secs"
+                              />
+                            )}
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-neutral-300 mb-1.5">Font Style</label>
+                          <select 
+                            value={fontFamily}
+                            onChange={(e) => setFontFamily(e.target.value)}
+                            className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-3 text-white outline-none focus:border-teal-400"
+                          >
+                            <option value="Anton">Anton (Bold & Punchy)</option>
+                            <option value="Inter">Inter (Clean & Modern)</option>
+                            <option value="Playfair Display">Playfair Display (Elegant Serif)</option>
+                            <option value="Space Grotesk">Space Grotesk (Tech & Futuristic)</option>
+                            <option value="JetBrains Mono">JetBrains Mono (Coding & Cyber)</option>
+                            <option value="Bangers">Bangers (Comic & Fun)</option>
+                            <option value="Cinzel">Cinzel (Cinematic & Epic)</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <div>
                     <label className="block text-sm font-medium text-neutral-300 mb-1.5 flex items-center gap-2">
