@@ -184,9 +184,31 @@ export default function App() {
       const estimatedScenes = Math.max(3, Math.floor(targetSeconds / 4));
 
       const selectedTemplateData = VIDEO_TEMPLATES.find(t => t.id === selectedTemplate);
-      const templateInstruction = selectedTemplateData 
-        ? `\nCRITICAL THEME REQUIREMENT: You MUST strictly follow the "${selectedTemplateData.name}" template style. Description: ${selectedTemplateData.desc}. Adapt the scenes, pacing, and layout to perfectly match this specific style.` 
-        : '';
+      
+      let templateInstruction = '';
+      if (selectedTemplateData) {
+        const styleMapping: Record<string, string> = {
+          'ugc': 'Use a conversational, authentic tone. Prefer "center" and "split" layouts. Use bright, approachable colors (e.g., greens, blues). Keep text short and relatable.',
+          'teaser': 'Use high-energy, punchy hooks. Prefer "center" and "mockup" layouts. Use bold, contrasting colors (e.g., reds, blacks, yellows). Keep pacing fast.',
+          'educational': 'Use a structured, step-by-step approach. Prefer "split" and "data" layouts. Use trustworthy colors (e.g., blues, whites). Ensure text is highly readable.',
+          'bts': 'Use a casual, behind-the-scenes tone. Prefer "split" layouts. Use warm, earthy colors (e.g., oranges, browns). Focus on process and authenticity.',
+          'listicle': 'Structure the video as a numbered list (e.g., Top 3). Prefer "data" and "split" layouts. Use vibrant, engaging colors (e.g., purples, pinks).',
+          'before_after': 'Focus on transformation. Alternate between "split" layouts for before and after states. Use contrasting colors (e.g., gray for before, green for after).',
+          'vlog': 'Use a personal, storytelling tone. Prefer "center" and "split" layouts. Use warm, inviting colors. Focus on daily activities and lifestyle.',
+          'minimalist': 'Use a calm, elegant tone. Prefer "center" layouts with minimal text. Use monochromatic or muted colors (e.g., slate, black, white). Keep pacing slow.',
+          'meme': 'Use humorous, relatable, internet-culture hooks. Prefer "center" and "split" layouts. Use bright, meme-friendly colors (e.g., yellow, black).',
+          'hype': 'Use urgent, FOMO-inducing language. Prefer "center" layouts with massive text. Use aggressive, high-contrast colors (e.g., orange, black, red).',
+          'qa': 'Structure as questions and answers. Prefer "split" layouts. Use friendly, clear colors (e.g., cyan, blue).',
+          'data': 'Focus on statistics, growth, and ROI. Prefer "data" layouts. Use professional, corporate colors (e.g., teal, navy, emerald).'
+        };
+
+        const specificInstructions = styleMapping[selectedTemplateData.id] || '';
+
+        templateInstruction = `\n\nCRITICAL THEME REQUIREMENT: You MUST strictly follow the "${selectedTemplateData.name}" template style. 
+        Description: ${selectedTemplateData.desc}.
+        Specific Instructions for this template: ${specificInstructions}
+        Adapt the scenes, pacing, color palette, and layout choices to perfectly match this specific aesthetic.`;
+      }
 
       const prompt = `Create a highly engaging, professional social media promotional video script based on this input: "${promptInput}". 
       The tone and style of the video should be: ${videoStyle}.${templateInstruction}
