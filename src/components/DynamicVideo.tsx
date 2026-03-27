@@ -14,6 +14,73 @@ export type Scene = {
   dataLabel?: string;
 };
 
+// Kinetic Text Component
+const KineticText: React.FC<{ text: string; frame: number; fps: number; primaryColor: string; fontFamily: string }> = ({ text, frame, fps, primaryColor, fontFamily }) => {
+  const words = text.toUpperCase().split(' ');
+  
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '20px', marginBottom: '20px' }}>
+      {words.map((word, i) => {
+        const delay = i * 4;
+        const wordEntrance = spring({
+          frame: frame - delay,
+          fps,
+          config: { damping: 12, stiffness: 200, mass: 0.5 },
+        });
+        
+        const y = interpolate(wordEntrance, [0, 1], [50, 0]);
+        const opacity = interpolate(wordEntrance, [0, 1], [0, 1]);
+        const scale = interpolate(wordEntrance, [0, 1], [0.5, 1]);
+        const isHighlight = i % 2 !== 0;
+        
+        return (
+          <span key={i} style={{ 
+            display: 'inline-block', 
+            transform: `translateY(${y}px) scale(${scale})`, 
+            opacity,
+            color: isHighlight ? primaryColor : 'white',
+            fontFamily: `${fontFamily}, sans-serif`,
+            fontSize: '110px',
+            fontWeight: 900,
+            lineHeight: 1.1,
+            textShadow: '0 15px 30px rgba(0,0,0,0.8)'
+          }}>
+            {word}
+          </span>
+        );
+      })}
+    </div>
+  );
+};
+
+// Dynamic Background Component
+const DynamicBackground: React.FC<{ frame: number; primaryColor: string; bgColor: string; width: number; height: number }> = ({ frame, primaryColor, bgColor, width, height }) => {
+  const moveX = Math.sin(frame / 60) * 300;
+  const moveY = Math.cos(frame / 60) * 300;
+  
+  return (
+    <AbsoluteFill style={{ backgroundColor: bgColor, overflow: 'hidden' }}>
+      <div style={{
+        position: 'absolute',
+        width: width * 1.5,
+        height: width * 1.5,
+        borderRadius: '50%',
+        background: `radial-gradient(circle, ${primaryColor}60 0%, transparent 70%)`,
+        top: -width/2 + moveY,
+        left: -width/2 + moveX,
+        filter: 'blur(100px)',
+      }} />
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        backgroundImage: `linear-gradient(rgba(255,255,255,0.04) 2px, transparent 2px), linear-gradient(90deg, rgba(255,255,255,0.04) 2px, transparent 2px)`,
+        backgroundSize: '80px 80px',
+        backgroundPosition: `${(frame * 2) % 80}px ${(frame * 2) % 80}px`,
+      }} />
+    </AbsoluteFill>
+  );
+};
+
 export const DynamicVideo: React.FC<{ scenes: Scene[], fontFamily?: string }> = ({ scenes, fontFamily = 'Anton' }) => {
   const { fps } = useVideoConfig();
 
@@ -78,24 +145,34 @@ const SceneComponent: React.FC<{ scene: Scene; index: number; fontFamily: string
 
 // --- Layout Components ---
 
-const CenterLayout = ({ scene, frame, fps, entrance, fadeOut, Icon, fontFamily, primaryColor, bgColor }: any) => {
-  const titleY = interpolate(entrance, [0, 1], [100, 0]);
-  const titleOpacity = interpolate(entrance, [0, 1], [0, 1]);
-  
-  const iconScale = spring({ frame: frame - 5, fps, config: { damping: 10, stiffness: 120 } });
-  const subtitleOpacity = interpolate(frame, [15, 25], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+const CenterLayout = ({ scene, frame, fps, entrance, fadeOut, Icon, fontFamily, primaryColor, bgColor, width, height }: any) => {
+  const subtitleOpacity = interpolate(frame, [25, 45], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+  const subtitleY = interpolate(frame, [25, 45], [50, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
 
   return (
-    <AbsoluteFill style={{ backgroundColor: bgColor, justifyContent: 'center', alignItems: 'center', opacity: fadeOut }}>
-      <div style={{ transform: `scale(${iconScale})`, marginBottom: '40px', backgroundColor: primaryColor, padding: '40px', borderRadius: '50%', boxShadow: `0 20px 50px ${primaryColor}80` }}>
-        <Icon size={120} color={bgColor} strokeWidth={2.5} />
+    <AbsoluteFill style={{ justifyContent: 'center', alignItems: 'center', opacity: fadeOut }}>
+      <DynamicBackground frame={frame} primaryColor={primaryColor} bgColor={bgColor} width={width} height={height} />
+      
+      <div style={{ zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', width: '80%' }}>
+        <KineticText text={scene.title} frame={frame} fps={fps} primaryColor={primaryColor} fontFamily={fontFamily} />
+        
+        <p style={{ 
+          fontFamily: 'Inter, sans-serif', 
+          fontSize: '45px', 
+          color: 'rgba(255,255,255,0.9)', 
+          marginTop: '40px', 
+          opacity: subtitleOpacity, 
+          transform: `translateY(${subtitleY}px)`,
+          textAlign: 'center', 
+          fontWeight: 600,
+          textShadow: '0 5px 15px rgba(0,0,0,0.6)'
+        }}>
+          {scene.subtitle}
+        </p>
       </div>
-      <h1 style={{ fontFamily: `${fontFamily}, sans-serif`, fontSize: '120px', lineHeight: 1.1, color: 'white', textTransform: 'uppercase', margin: 0, transform: `translateY(${titleY}px)`, opacity: titleOpacity, textAlign: 'center', textShadow: '0 10px 30px rgba(0,0,0,0.5)', maxWidth: '80%' }}>
-        {scene.title}
-      </h1>
-      <p style={{ fontFamily: 'Inter, sans-serif', fontSize: '40px', color: 'rgba(255,255,255,0.8)', marginTop: '30px', opacity: subtitleOpacity, textAlign: 'center', maxWidth: '70%', fontWeight: 500 }}>
-        {scene.subtitle}
-      </p>
+      
+      {/* Progress Bar */}
+      <div style={{ position: 'absolute', bottom: 0, left: 0, height: '12px', backgroundColor: primaryColor, width: `${(frame / scene.durationInFrames) * 100}%` }} />
     </AbsoluteFill>
   );
 };

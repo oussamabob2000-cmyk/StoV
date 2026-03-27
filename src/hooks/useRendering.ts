@@ -5,7 +5,7 @@ export function useRendering() {
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('');
 
-  const exportVideo = useCallback(async (totalDurationSec: number, text: string) => {
+  const exportVideo = useCallback(async (totalDurationSec: number, text: string, scenes?: any[]) => {
     setIsExporting(true);
     setProgress(0);
     setStatus('Initialisation du moteur / تهيئة المحرك...');
@@ -41,7 +41,7 @@ export function useRendering() {
         
         worker.postMessage({
           type: 'RENDER_CHUNK',
-          payload: { chunkIndex: 0, startFrame, endFrame, fps, width: 1080, height: 1920, text }
+          payload: { chunkIndex: 0, startFrame, endFrame, fps, width: 1080, height: 1920, text, scenes }
         });
       });
 

@@ -622,11 +622,11 @@ export default function App() {
                   <h3 className="text-lg font-bold mb-2 text-purple-400">New Architecture (Web Worker + Chunking)</h3>
                   <p className="text-sm text-neutral-400 mb-4">Test the new experimental hardware-accelerated rendering engine with RTL support.</p>
                   <button 
-                    onClick={() => exportVideo(15, promptInput || 'تصدير الفيديو التجريبي')} 
+                    onClick={() => exportVideo(totalDuration / 30, promptInput || 'تصدير الفيديو التجريبي', scenes || undefined)} 
                     disabled={isRendering || isExporting} 
                     className="w-full py-3 px-6 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/50 text-purple-400 font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
                   >
-                    <Zap size={18} /> Test Worker Engine (15s)
+                    <Zap size={18} /> Test Worker Engine ({Math.round(totalDuration / 30)}s)
                   </button>
                 </div>
               </div>
