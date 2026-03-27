@@ -77,12 +77,12 @@ export default function App() {
   const [format, setFormat] = useState<'mp4' | 'webm' | 'gif'>('mp4');
   const [fps, setFps] = useState<number>(30);
 
-  // New Architecture Hook
-  const { isExporting, progress: exportProgress, status: exportStatus, exportVideo } = useRendering();
-
   const playerRef = useRef<PlayerRef>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const ffmpegRef = useRef(new FFmpeg());
+
+  // New Architecture Hook
+  const { isExporting, progress: exportProgress, status: exportStatus, exportVideo } = useRendering(ffmpegRef.current);
 
   useEffect(() => {
     if (engine === 'webcodecs' && format !== 'mp4') {
@@ -257,10 +257,18 @@ export default function App() {
         setRenderLog(message);
       });
       const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-      await ffmpeg.load({
-        coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-        wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-      });
+      try {
+        await ffmpeg.load({
+          coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+          wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+        });
+      } catch (blobError) {
+        console.warn('toBlobURL failed in App.tsx, attempting direct URL load...', blobError);
+        await ffmpeg.load({
+          coreURL: `${baseURL}/ffmpeg-core.js`,
+          wasmURL: `${baseURL}/ffmpeg-core.wasm`,
+        });
+      }
     }
   };
 

@@ -2,11 +2,11 @@ import { useState, useRef, useCallback } from 'react';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { toBlobURL } from '@ffmpeg/util';
 
-export function useRendering() {
+export function useRendering(sharedFfmpeg?: FFmpeg) {
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('');
-  const ffmpegRef = useRef(new FFmpeg());
+  const localFfmpegRef = useRef(new FFmpeg());
 
   const exportVideo = useCallback(async (totalDurationSec: number, text: string) => {
     setIsExporting(true);
@@ -15,17 +15,26 @@ export function useRendering() {
 
     try {
       // 1. Load FFmpeg
-      const ffmpeg = ffmpegRef.current;
+      const ffmpeg = sharedFfmpeg || localFfmpegRef.current;
       try {
         if (!ffmpeg.loaded) {
           const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-          await ffmpeg.load({
-            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-          });
+          try {
+            await ffmpeg.load({
+              coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+              wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+            });
+          } catch (blobError) {
+            console.warn('toBlobURL failed, attempting direct URL load...', blobError);
+            await ffmpeg.load({
+              coreURL: `${baseURL}/ffmpeg-core.js`,
+              wasmURL: `${baseURL}/ffmpeg-core.wasm`,
+            });
+          }
         }
       } catch (e: any) {
-        throw new Error(`FFmpeg load failed: ${e.message}`);
+        console.error('FFmpeg load error:', e);
+        throw new Error(`FFmpeg load failed: ${e?.message || String(e)}`);
       }
 
       // 2. Chunking Strategy (5-second segments)
