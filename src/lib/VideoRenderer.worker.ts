@@ -94,7 +94,7 @@ self.onmessage = async (e) => {
         frame.close(); // Strict memory cleanup
 
         if (i % 10 === 0) {
-          self.postMessage({ type: 'PROGRESS', payload: { chunkIndex, progress: i / totalFrames } });
+          (self as unknown as Worker).postMessage({ type: 'PROGRESS', payload: { chunkIndex, progress: i / totalFrames } });
         }
       }
 
@@ -104,9 +104,9 @@ self.onmessage = async (e) => {
       muxer.finalize();
 
       const buffer = muxer.target.buffer;
-      self.postMessage({ type: 'CHUNK_COMPLETE', payload: { chunkIndex, buffer } }, [buffer]);
+      (self as unknown as Worker).postMessage({ type: 'CHUNK_COMPLETE', payload: { chunkIndex, buffer } }, [buffer]);
     } catch (error: any) {
-      self.postMessage({ type: 'ERROR', payload: { chunkIndex, error: error.message || String(error) } });
+      (self as unknown as Worker).postMessage({ type: 'ERROR', payload: { chunkIndex, error: error.message || String(error) } });
     }
   }
 };

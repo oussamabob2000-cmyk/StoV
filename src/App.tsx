@@ -31,6 +31,7 @@ export default function App() {
   const [manualLength, setManualLength] = useState(30);
   const [pinInput, setPinInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationTimer, setGenerationTimer] = useState(0);
   const [scenes, setScenes] = useState<Scene[] | null>(null);
   const [aiError, setAiError] = useState('');
 
@@ -66,6 +67,20 @@ export default function App() {
     }
   }, [promptInput]);
 
+  // Generation Timer
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isGenerating) {
+      setGenerationTimer(0);
+      interval = setInterval(() => {
+        setGenerationTimer(prev => prev + 1);
+      }, 1000);
+    } else {
+      setGenerationTimer(0);
+    }
+    return () => clearInterval(interval);
+  }, [isGenerating]);
+
   // Render State
   const [isRendering, setIsRendering] = useState(false);
   const [renderProgress, setRenderProgress] = useState(0);
@@ -82,7 +97,7 @@ export default function App() {
   const ffmpegRef = useRef(new FFmpeg());
 
   // New Architecture Hook
-  const { isExporting, progress: exportProgress, status: exportStatus, exportVideo } = useRendering(ffmpegRef.current);
+  const { isExporting, progress: exportProgress, status: exportStatus, exportVideo } = useRendering();
 
   useEffect(() => {
     if (engine === 'webcodecs' && format !== 'mp4') {
@@ -775,7 +790,7 @@ export default function App() {
                     disabled={isGenerating || !hasEncryptedSettings()}
                     className="w-full py-4 px-6 bg-purple-500 hover:bg-purple-400 disabled:bg-neutral-800 disabled:text-neutral-500 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 text-lg shadow-lg shadow-purple-500/20"
                   >
-                    {isGenerating ? <><Loader2 className="animate-spin" /> Generating Script...</> : <><Wand2 /> Generate Video</>}
+                    {isGenerating ? <><Loader2 className="animate-spin" /> Generating Script... ({generationTimer}s)</> : <><Wand2 /> Generate Video</>}
                   </button>
 
                   {!hasEncryptedSettings() && (
