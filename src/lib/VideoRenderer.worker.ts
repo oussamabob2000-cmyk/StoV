@@ -1,4 +1,4 @@
-import * as Mp4Muxer from 'mp4-muxer';
+import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 
 self.onmessage = async (e) => {
   const { type, payload } = e.data;
@@ -6,35 +6,59 @@ self.onmessage = async (e) => {
     const { chunkIndex, startFrame, endFrame, fps, width, height, text } = payload;
     
     try {
+      if (typeof OffscreenCanvas === 'undefined') {
+        throw new Error('OffscreenCanvas non supporté par ce navigateur.');
+      }
+      if (typeof VideoEncoder === 'undefined') {
+        throw new Error('VideoEncoder non supporté par ce navigateur.');
+      }
+
       // 1. Setup OffscreenCanvas
       const canvas = new OffscreenCanvas(width, height);
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { alpha: false });
       if (!ctx) throw new Error('Failed to get 2d context');
 
       // 2. Setup Muxer & Encoder
-      const muxer = new Mp4Muxer.Muxer({
-        target: new Mp4Muxer.ArrayBufferTarget(),
+      const muxer = new Muxer({
+        target: new ArrayBufferTarget(),
         video: { codec: 'avc', width, height },
         fastStart: 'in-memory',
       });
 
+      let encoderError: Error | null = null;
       const videoEncoder = new VideoEncoder({
         output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-        error: (e) => console.error(e),
+        error: (err) => {
+          console.error('VideoEncoder error:', err);
+          encoderError = err;
+        },
       });
 
-      videoEncoder.configure({
-        codec: 'avc1.420028',
+      const config: VideoEncoderConfig = {
+        codec: 'avc1.42E028', // Baseline profile, level 4.0
         width,
         height,
         bitrate: 5_000_000,
         framerate: fps,
         hardwareAcceleration: 'prefer-hardware',
-      });
+      };
+
+      const support = await VideoEncoder.isConfigSupported(config);
+      if (!support.supported) {
+        config.hardwareAcceleration = 'no-preference';
+        const support2 = await VideoEncoder.isConfigSupported(config);
+        if (!support2.supported) {
+           throw new Error('Configuration VideoEncoder non supportée.');
+        }
+      }
+
+      videoEncoder.configure(config);
 
       // 3. Render Loop (GPU Accelerated via Canvas API)
       const totalFrames = endFrame - startFrame;
       for (let i = 0; i < totalFrames; i++) {
+        if (encoderError) throw encoderError;
+
         // Clear background
         ctx.fillStyle = chunkIndex % 2 === 0 ? '#0f172a' : '#1e293b';
         ctx.fillRect(0, 0, width, height);
@@ -75,12 +99,14 @@ self.onmessage = async (e) => {
       }
 
       await videoEncoder.flush();
+      if (encoderError) throw encoderError;
+      
       muxer.finalize();
 
       const buffer = muxer.target.buffer;
       self.postMessage({ type: 'CHUNK_COMPLETE', payload: { chunkIndex, buffer } }, [buffer]);
     } catch (error: any) {
-      self.postMessage({ type: 'ERROR', payload: { chunkIndex, error: error.message } });
+      self.postMessage({ type: 'ERROR', payload: { chunkIndex, error: error.message || String(error) } });
     }
   }
 };

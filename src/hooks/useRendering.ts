@@ -16,12 +16,16 @@ export function useRendering() {
     try {
       // 1. Load FFmpeg
       const ffmpeg = ffmpegRef.current;
-      if (!ffmpeg.loaded) {
-        const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-        await ffmpeg.load({
-          coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-          wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-        });
+      try {
+        if (!ffmpeg.loaded) {
+          const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+          await ffmpeg.load({
+            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+          });
+        }
+      } catch (e: any) {
+        throw new Error(`FFmpeg load failed: ${e.message}`);
       }
 
       // 2. Chunking Strategy (5-second segments)
@@ -109,11 +113,11 @@ export function useRendering() {
       await ffmpeg.deleteFile('list.txt');
       await ffmpeg.deleteFile('output.mp4');
 
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      setStatus('Erreur / خطأ');
+      setStatus(`Erreur: ${error.message || 'Inconnue'}`);
     } finally {
-      setTimeout(() => setIsExporting(false), 2000);
+      setTimeout(() => setIsExporting(false), 4000);
     }
   }, []);
 
