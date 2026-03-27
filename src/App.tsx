@@ -1,16 +1,17 @@
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Player, PlayerRef } from '@remotion/player';
 import { DefaultTemplate } from './components/DefaultTemplate';
 import { DynamicVideo, Scene } from './components/DynamicVideo';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { toPng, toCanvas } from 'html-to-image';
-import { Download, Play, Loader2, Video, Settings, Zap, Wand2, KeyRound, Lock, MonitorPlay, ChevronDown, ChevronUp } from 'lucide-react';
+import { Download, Play, Loader2, Video, Settings, Zap, Wand2, KeyRound, Lock, MonitorPlay, ChevronDown, ChevronUp, Upload, X, Smartphone, Rocket, BookOpen, Clapperboard, ListOrdered, ArrowRightLeft, Coffee, Feather, Sparkles, Flame, MessageCircleQuestion, BarChart3 } from 'lucide-react';
 import * as Mp4Muxer from 'mp4-muxer';
 import { GoogleGenAI, Type } from '@google/genai';
 import { saveEncryptedSettings, getDecryptedSettings, hasEncryptedSettings, AISettings } from './lib/crypto';
 import { useRendering } from './hooks/useRendering';
 import { ExportModal } from './components/ExportModal';
+import { TEMPLATE_DEMOS } from './lib/templateDemos';
 
 const DIMENSIONS: Record<string, Record<string, [number, number]>> = {
   '1080': { '9:16': [1080, 1920], '16:9': [1920, 1080], '1:1': [1080, 1080] },
@@ -19,11 +20,28 @@ const DIMENSIONS: Record<string, Record<string, [number, number]>> = {
   '360': { '9:16': [360, 640], '16:9': [640, 360], '1:1': [360, 360] },
 };
 
+const VIDEO_TEMPLATES = [
+  { id: 'ugc', name: 'UGC / Testimonial', desc: 'Authentic, raw, relatable review style', icon: Smartphone },
+  { id: 'teaser', name: 'Product Teaser', desc: 'High energy, fast cuts, bold text', icon: Rocket },
+  { id: 'educational', name: 'Educational / How-To', desc: 'Step-by-step, clear text overlays', icon: BookOpen },
+  { id: 'bts', name: 'Behind the Scenes', desc: 'Casual, engaging, building trust', icon: Clapperboard },
+  { id: 'listicle', name: 'Listicle (Top 3/5)', desc: 'Numbered points, high retention', icon: ListOrdered },
+  { id: 'before_after', name: 'Before & After', desc: 'Transformation, satisfying reveal', icon: ArrowRightLeft },
+  { id: 'vlog', name: 'Day in the Life', desc: 'Storytelling, lifestyle-focused', icon: Coffee },
+  { id: 'minimalist', name: 'Minimalist / Aesthetic', desc: 'Slow pacing, elegant typography', icon: Feather },
+  { id: 'meme', name: 'Trending / Meme', desc: 'Humorous, highly shareable format', icon: Sparkles },
+  { id: 'hype', name: 'Event / Hype', desc: 'Fast-paced, energetic, FOMO inducing', icon: Flame },
+  { id: 'qa', name: 'Q&A / FAQ', desc: 'Direct to camera, text bubbles', icon: MessageCircleQuestion },
+  { id: 'data', name: 'Data / Infographic', desc: 'Stat-heavy, animated charts, B2B', icon: BarChart3 },
+];
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<'preview' | 'ai' | 'settings'>('preview');
   
   // AI State
   const [promptInput, setPromptInput] = useState('');
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  const [previewTemplate, setPreviewTemplate] = useState<string | null>(null);
   const [promptTemplate, setPromptTemplate] = useState('custom');
   const [videoStyle, setVideoStyle] = useState('Professional Marketing');
   const [fontFamily, setFontFamily] = useState('Anton');
@@ -42,6 +60,8 @@ export default function App() {
   const [settingsPin, setSettingsPin] = useState('');
   const [settingsMessage, setSettingsMessage] = useState('');
   const [showOptions, setShowOptions] = useState(false);
+  const [referenceVideo, setReferenceVideo] = useState<File | null>(null);
+  const [referenceVideoBase64, setReferenceVideoBase64] = useState<string | null>(null);
 
   // Auto-adjust settings based on prompt input
   useEffect(() => {
@@ -122,6 +142,24 @@ export default function App() {
     setTimeout(() => setSettingsMessage(''), 3000);
   };
 
+  const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    if (file.size > 10 * 1024 * 1024) {
+      alert("File is too large. Please upload a video smaller than 10MB.");
+      return;
+    }
+    
+    setReferenceVideo(file);
+    
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setReferenceVideoBase64(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleGenerateAI = async () => {
     setAiError('');
     if (!promptInput) {
@@ -145,8 +183,13 @@ export default function App() {
       const targetFrames = targetSeconds * 30;
       const estimatedScenes = Math.max(3, Math.floor(targetSeconds / 4));
 
+      const selectedTemplateData = VIDEO_TEMPLATES.find(t => t.id === selectedTemplate);
+      const templateInstruction = selectedTemplateData 
+        ? `\nCRITICAL THEME REQUIREMENT: You MUST strictly follow the "${selectedTemplateData.name}" template style. Description: ${selectedTemplateData.desc}. Adapt the scenes, pacing, and layout to perfectly match this specific style.` 
+        : '';
+
       const prompt = `Create a highly engaging, professional social media promotional video script based on this input: "${promptInput}". 
-      The tone and style of the video should be: ${videoStyle}.
+      The tone and style of the video should be: ${videoStyle}.${templateInstruction}
       The video should have around ${estimatedScenes} scenes. 
       
       CRITICAL: The total video must be exactly ${targetSeconds} seconds long (${targetFrames} frames total). The sum of 'durationInFrames' across all scenes MUST equal exactly ${targetFrames}.
@@ -226,9 +269,29 @@ export default function App() {
         generatedScenes = JSON.parse(text);
       } else {
         const ai = new GoogleGenAI({ apiKey: settings.apiKey });
+        
+        let finalPrompt = prompt;
+        let contents: any = finalPrompt;
+
+        if (referenceVideoBase64) {
+          finalPrompt = `I have attached a reference video. Please deeply analyze its visual style, color palette, text animations, pacing, and overall vibe. Then, generate a script for a new video based on this input: "${promptInput}". The new script MUST heavily simulate the style, colors, layout, and animation vibe of the attached reference video.\n\n${prompt}`;
+          
+          contents = {
+            parts: [
+              {
+                inlineData: {
+                  mimeType: referenceVideo?.type || 'video/mp4',
+                  data: referenceVideoBase64.split(',')[1]
+                }
+              },
+              { text: finalPrompt }
+            ]
+          };
+        }
+
         const response = await ai.models.generateContent({
           model: 'gemini-3.1-pro-preview',
-          contents: prompt,
+          contents: contents,
           config: {
             responseMimeType: 'application/json',
             responseSchema: {
@@ -240,9 +303,11 @@ export default function App() {
                   subtitle: { type: Type.STRING },
                   iconName: { type: Type.STRING },
                   color: { type: Type.STRING },
+                  bgColor: { type: Type.STRING },
+                  layout: { type: Type.STRING, enum: ['center', 'split', 'mockup', 'data'] },
                   durationInFrames: { type: Type.NUMBER }
                 },
-                required: ['title', 'subtitle', 'iconName', 'color', 'durationInFrames']
+                required: ['title', 'subtitle', 'iconName', 'color', 'bgColor', 'layout', 'durationInFrames']
               }
             }
           }
@@ -649,6 +714,76 @@ export default function App() {
                     />
                   </div>
 
+                  {/* TEMPLATE SELECTION (OPTIONAL) */}
+                  <div className="space-y-3">
+                    <label className="text-sm font-medium text-neutral-300 flex items-center justify-between">
+                      <span className="flex items-center gap-2"><Wand2 size={16} className="text-teal-400" /> Choose a Theme/Template (Optional)</span>
+                      {selectedTemplate && (
+                        <button onClick={() => setSelectedTemplate(null)} className="text-xs text-red-400 hover:text-red-300 transition-colors">
+                          Clear Selection
+                        </button>
+                      )}
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                      {VIDEO_TEMPLATES.map(t => {
+                        const Icon = t.icon;
+                        const isSelected = selectedTemplate === t.id;
+                        return (
+                          <div key={t.id} className={`relative p-3 rounded-xl border text-left transition-all flex flex-col gap-2 ${isSelected ? 'bg-teal-500/20 border-teal-500 text-teal-300' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:bg-neutral-800 hover:border-neutral-700'}`}>
+                            <button
+                              onClick={() => setSelectedTemplate(isSelected ? null : t.id)}
+                              className="flex flex-col gap-2 text-left w-full"
+                            >
+                              <Icon size={20} className={isSelected ? 'text-teal-400' : 'text-neutral-500'} />
+                              <div>
+                                <div className={`font-bold text-sm ${isSelected ? 'text-teal-300' : 'text-neutral-200'}`}>{t.name}</div>
+                                <div className="text-xs opacity-70 line-clamp-2 mt-0.5">{t.desc}</div>
+                              </div>
+                            </button>
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); setPreviewTemplate(t.id); }}
+                              className="mt-2 flex items-center justify-center gap-1 w-full py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded text-xs font-medium transition-colors"
+                            >
+                              <Play size={12} /> Watch Demo
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* REFERENCE VIDEO UPLOAD */}
+                  <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-4 flex flex-col gap-2">
+                    <label className="text-sm font-medium text-neutral-300 flex items-center gap-2">
+                      <Video size={16} className="text-teal-400" /> Reference Video (Optional, Gemini Only)
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <label className={`cursor-pointer border ${aiProvider === 'gemini' ? 'border-neutral-700 hover:border-teal-500 bg-neutral-900 text-neutral-300' : 'border-neutral-800 bg-neutral-950 text-neutral-600'} px-4 py-3 rounded-lg transition-colors flex items-center gap-2 text-sm flex-1`}>
+                        <Upload size={16} />
+                        <span className="truncate">{referenceVideo ? referenceVideo.name : "Upload a video to simulate style & animation (Max 10MB)"}</span>
+                        <input 
+                          type="file" 
+                          accept="video/*" 
+                          className="hidden" 
+                          onChange={handleVideoUpload}
+                          disabled={isGenerating || aiProvider !== 'gemini'}
+                        />
+                      </label>
+                      {referenceVideo && (
+                        <button 
+                          onClick={() => { setReferenceVideo(null); setReferenceVideoBase64(null); }}
+                          className="p-3 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-lg transition-colors"
+                          title="Remove Reference Video"
+                        >
+                          <X size={16} />
+                        </button>
+                      )}
+                    </div>
+                    {aiProvider !== 'gemini' && (
+                      <p className="text-xs text-amber-500">Reference video analysis is only available when using Google Gemini.</p>
+                    )}
+                  </div>
+
                   {/* TOGGLE ADVANCED OPTIONS */}
                   <button 
                     onClick={() => setShowOptions(!showOptions)}
@@ -889,6 +1024,51 @@ export default function App() {
 
       {/* Export Modal for New Architecture */}
       <ExportModal isOpen={isExporting} progress={exportProgress} status={exportStatus} />
+
+      {/* Template Preview Modal */}
+      {previewTemplate && TEMPLATE_DEMOS[previewTemplate] && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 w-full max-w-sm flex flex-col gap-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <MonitorPlay size={18} className="text-teal-400" />
+                {VIDEO_TEMPLATES.find(t => t.id === previewTemplate)?.name} Demo
+              </h3>
+              <button onClick={() => setPreviewTemplate(null)} className="text-neutral-400 hover:text-white">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="rounded-xl overflow-hidden bg-black aspect-[9/16] relative">
+              <Player
+                component={DynamicVideo}
+                inputProps={{ 
+                  scenes: TEMPLATE_DEMOS[previewTemplate].scenes,
+                  fontFamily: TEMPLATE_DEMOS[previewTemplate].fontFamily
+                }}
+                durationInFrames={TEMPLATE_DEMOS[previewTemplate].scenes.reduce((acc, s) => acc + s.durationInFrames, 0)}
+                fps={30}
+                compositionWidth={1080}
+                compositionHeight={1920}
+                style={{ width: '100%', height: '100%' }}
+                controls
+                autoPlay
+                loop
+              />
+            </div>
+
+            <button
+              onClick={() => {
+                setSelectedTemplate(previewTemplate);
+                setPreviewTemplate(null);
+              }}
+              className="w-full py-3 bg-teal-500 hover:bg-teal-400 text-white font-bold rounded-xl transition-colors"
+            >
+              Use This Template
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
