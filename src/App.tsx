@@ -9,6 +9,8 @@ import { Download, Play, Loader2, Video, Settings, Zap, Wand2, KeyRound, Lock, M
 import * as Mp4Muxer from 'mp4-muxer';
 import { GoogleGenAI, Type } from '@google/genai';
 import { saveEncryptedSettings, getDecryptedSettings, hasEncryptedSettings, AISettings } from './lib/crypto';
+import { useRendering } from './hooks/useRendering';
+import { ExportModal } from './components/ExportModal';
 
 const DIMENSIONS: Record<string, Record<string, [number, number]>> = {
   '1080': { '9:16': [1080, 1920], '16:9': [1920, 1080], '1:1': [1080, 1080] },
@@ -68,11 +70,15 @@ export default function App() {
   const [isRendering, setIsRendering] = useState(false);
   const [renderProgress, setRenderProgress] = useState(0);
   const [statusText, setStatusText] = useState('');
+  const [renderLog, setRenderLog] = useState('');
   const [engine, setEngine] = useState<'webcodecs' | 'ffmpeg'>('webcodecs');
   const [resolution, setResolution] = useState<'1080' | '720' | '480' | '360'>('1080');
   const [aspectRatio, setAspectRatio] = useState<'9:16' | '16:9' | '1:1'>('9:16');
   const [format, setFormat] = useState<'mp4' | 'webm' | 'gif'>('mp4');
   const [fps, setFps] = useState<number>(30);
+
+  // New Architecture Hook
+  const { isExporting, progress: exportProgress, status: exportStatus, exportVideo } = useRendering();
 
   const playerRef = useRef<PlayerRef>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
@@ -247,6 +253,9 @@ export default function App() {
     const ffmpeg = ffmpegRef.current;
     if (!ffmpeg.loaded) {
       setStatusText('Loading FFmpeg...');
+      ffmpeg.on('log', ({ message }) => {
+        setRenderLog(message);
+      });
       const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
       await ffmpeg.load({
         coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
@@ -259,6 +268,7 @@ export default function App() {
     if (isRendering) return;
     setIsRendering(true);
     setRenderProgress(0);
+    setRenderLog('');
     setStatusText('Initializing Hardware Encoder...');
 
     try {
@@ -315,9 +325,11 @@ export default function App() {
         
         setRenderProgress((i / totalFrames) * 100);
         setStatusText(`Encoding frame ${i + 1}/${totalFrames}...`);
+        setRenderLog(`WebCodecs: Processed frame ${i + 1} / ${totalFrames}`);
       }
 
       setStatusText('Finalizing video...');
+      setRenderLog('Flushing encoder and finalizing MP4 container...');
       await videoEncoder.flush();
       muxer.finalize();
 
@@ -344,6 +356,7 @@ export default function App() {
     if (isRendering) return;
     setIsRendering(true);
     setRenderProgress(0);
+    setRenderLog('');
 
     try {
       await loadFFmpeg();
@@ -379,9 +392,11 @@ export default function App() {
           await ffmpeg.writeFile(`frame-${i.toString().padStart(4, '0')}.png`, uint8Array);
         }
         setRenderProgress((i / totalFrames) * 50);
+        setRenderLog(`Captured frame ${i + 1}/${totalFrames} to memory...`);
       }
 
       setStatusText(`Encoding ${format.toUpperCase()}...`);
+      setRenderLog('Starting FFmpeg encoding process...');
       ffmpeg.on('progress', ({ progress }) => {
         setRenderProgress(50 + progress * 50);
       });
@@ -505,6 +520,12 @@ export default function App() {
                     <div className="h-full bg-teal-400 transition-all duration-300 ease-out" style={{ width: `${renderProgress}%` }} />
                   </div>
                   <p className="text-sm text-neutral-400 mt-2">{Math.round(renderProgress)}%</p>
+                  
+                  {renderLog && (
+                    <div className="mt-6 w-5/6 bg-black/60 border border-neutral-800 rounded-lg p-3 text-[10px] text-neutral-500 font-mono h-20 overflow-hidden flex flex-col justify-end break-all">
+                      <span className="line-clamp-3">{renderLog}</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -570,9 +591,21 @@ export default function App() {
                   </div>
                 </div>
 
-                <button onClick={handleRender} disabled={isRendering} className="w-full py-4 px-6 bg-teal-500 hover:bg-teal-400 disabled:bg-neutral-800 disabled:text-neutral-500 text-neutral-950 font-bold rounded-xl transition-colors flex items-center justify-center gap-2 text-lg shadow-lg shadow-teal-500/20">
+                <button onClick={handleRender} disabled={isRendering || isExporting} className="w-full py-4 px-6 bg-teal-500 hover:bg-teal-400 disabled:bg-neutral-800 disabled:text-neutral-500 text-neutral-950 font-bold rounded-xl transition-colors flex items-center justify-center gap-2 text-lg shadow-lg shadow-teal-500/20">
                   {isRendering ? <><Loader2 className="animate-spin" /> Rendering...</> : <><Download /> Render & Download</>}
                 </button>
+
+                <div className="pt-4 border-t border-neutral-800">
+                  <h3 className="text-lg font-bold mb-2 text-purple-400">New Architecture (Web Worker + Chunking)</h3>
+                  <p className="text-sm text-neutral-400 mb-4">Test the new experimental hardware-accelerated rendering engine with RTL support.</p>
+                  <button 
+                    onClick={() => exportVideo(15, promptInput || 'تصدير الفيديو التجريبي')} 
+                    disabled={isRendering || isExporting} 
+                    className="w-full py-3 px-6 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/50 text-purple-400 font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Zap size={18} /> Test Worker Engine (15s)
+                  </button>
+                </div>
               </div>
             )}
 
@@ -830,6 +863,9 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* Export Modal for New Architecture */}
+      <ExportModal isOpen={isExporting} progress={exportProgress} status={exportStatus} />
     </div>
   );
 }
